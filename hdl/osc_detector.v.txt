@@ -9,7 +9,7 @@ module osc_detector (
 );
     parameter WINDOW_TICKS = 4000;    // 1 мс при 4 МГц
     parameter CROSS_THRESH = 3;       // порог переходов
-    parameter VEL_HYST     = 32'h3D4CCCCD; // 0.05 м/с гистерезис
+    parameter VEL_HYST     = 32'h00000CCD; // 0.05 м/с в Q16.16 = 3277 (ИСПРАВЛЕНО)
 
     reg [31:0] velocity_prev;
     reg [7:0]  zero_cross_count;
