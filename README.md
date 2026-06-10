@@ -85,6 +85,21 @@ STL-файлы готовы. Но для работы нужен криокул�
    ./cryo_maxwell
    ```
 
+   ## Графики сходимости и результаты симуляций (FEA)
+
+Результаты численного моделирования и графики сходимости расчетов доступны в папке `docs`:
+
+| Исследование | График сходимости |
+| :--- | :--- |
+| **Общая сходимость FEA** | [![FEA Convergence](docs/convergence_FEA.png)](docs/convergence_FEA.png) |
+| **Магнитная система (Halbach)** | [![Halbach Convergence](docs/convergence_halbah.png)](docs/convergence_halbah.png) |
+| **Теплопритоки (Heat Gain)** | [![Heat Gain Convergence](docs/convergence_heat_gain.png)](docs/convergence_heat_gain.png) |
+| **Ударные нагрузки (Impact)** | [![Impact Convergence](docs/convergence_impact.png)](docs/convergence_impact.png) |
+| **Сверхпроводник (YBCO)** | [![YBCO Convergence](docs/convergence_ybco.png)](docs/convergence_ybco.png) |
+
+*Кликните на любой график, чтобы открыть его в оригинальном разрешении.*
+
+
    # ❄️ CRYO-MAXWELL V5.0
 
 **Вилочный амортизатор на квантовом пиннинге с активной рекуперацией энергии**
