@@ -34,3 +34,47 @@ STL-файлы готовы. Но для работы нужен криокул�
 
 </details>
 
+## Быстрый старт (Компиляция C++)
+
+Инструкция по сборке и запуску симуляций и управляющего ПО из папки `src`.
+
+### Требования
+Убедитесь, что в системе установлен компилятор C++ с поддержкой стандарта не ниже C++11 (рекомендуется GCC или Clang):
+* **Linux:** `sudo apt install build-essential`
+* **macOS:** `xcode-select --install`
+* **Windows:** Установите [Visual Studio](https://microsoft.com) с компонентом "Разработка классических приложений на C++".
+
+### Сборка и запуск
+
+1. **Клонируйте репозиторий и перейдите в папку с кодом:**
+   ```bash
+   git clone https://github.com
+   cd cryo-maxwell/src
+   ```
+
+2. **Скомпилируйте нужный модуль:**
+
+   * **Основной симулятор вилки:**
+     ```bash
+     g++ -O3 CRYO-MAXWELL.cpp -o cryo_maxwell
+     ```
+   * **Версия без сборки (No Assembly):**
+     ```bash
+     g++ -O3 cryo-maxwellnoassembly.cpp -o cryo_no_assembly
+     ```
+   * **Расчет магнитного поля (Halbach FEA):**
+     ```bash
+     g++ -O3 fea_halbach_magnetostatic.cpp -o fea_magnetostatic
+     ```
+   * **Расчет прочности/удара сапфировых втулок:**
+     ```bash
+     g++ -O3 fea_sapphire_impact.cpp -o fea_impact
+     ```
+   *(Флаг `-O3` обязателен для высокой скорости математических вычислений FEA).*
+
+3. **Запустите скомпилированный файл:**
+   ```bash
+   ./cryo_maxwell
+   ```
+
+
