@@ -22,30 +22,30 @@ module spi_master (
     reg [3:0] bit_cnt;
     reg [7:0] shift_reg_tx;
     reg [7:0] shift_reg_rx;
-    reg       spi_clk_prev;
+    reg [1:0] clk_div_counter;  // ДОБАВЛЕНО: счётчик для делителя на 4
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            state        <= IDLE;
-            spi_cs       <= 1'b1;
-            spi_clk      <= 1'b0;
-            spi_mosi     <= 1'b0;
-            bit_cnt      <= 4'd0;
-            tx_ready     <= 1'b1;
-            rx_valid     <= 1'b0;
-            rx_data      <= 8'd0;
-            shift_reg_tx <= 8'd0;
-            shift_reg_rx <= 8'd0;
-            spi_clk_prev <= 1'b0;
+            state           <= IDLE;
+            spi_cs          <= 1'b1;
+            spi_clk         <= 1'b0;
+            spi_mosi        <= 1'b0;
+            bit_cnt         <= 4'd0;
+            tx_ready        <= 1'b1;
+            rx_valid        <= 1'b0;
+            rx_data         <= 8'd0;
+            shift_reg_tx    <= 8'd0;
+            shift_reg_rx    <= 8'd0;
+            clk_div_counter <= 2'd0;  // ДОБАВЛЕНО
         end else begin
-            spi_clk_prev <= spi_clk;
-            rx_valid     <= 1'b0; // импульс на 1 такт
+            rx_valid <= 1'b0; // импульс на 1 такт
 
             case (state)
                 IDLE: begin
                     spi_cs   <= 1'b1;
                     spi_clk  <= 1'b0;
                     tx_ready <= 1'b1;
+                    clk_div_counter <= 2'd0;  // ДОБАВЛЕНО
 
                     if (tx_valid && tx_ready) begin
                         shift_reg_tx <= tx_data;
@@ -58,24 +58,30 @@ module spi_master (
                 end
 
                 TRANSFER: begin
-                    // Генерация тактов SPI_CLK (деление системного такта на 4)
-                    // Частота SPI = clk / 4
-                    spi_clk <= ~spi_clk;
+                    // Честный делитель на 4: счётчик 0→1→2→3→0
+                    clk_div_counter <= clk_div_counter + 2'd1;
 
-                    // Выставляем MOSI на спадающем фронте SPI_CLK
-                    if (spi_clk_prev && !spi_clk) begin
+                    // Переключение SPI_CLK на значениях счётчика 1 и 3
+                    // При clk=200 МГц это даст 50 МГц на SCK
+                    if (clk_div_counter == 2'd1)
+                        spi_clk <= 1'b1;
+                    else if (clk_div_counter == 2'd3)
+                        spi_clk <= 1'b0;
+
+                    // Выставляем MOSI на спадающем фронте SPI_CLK (счётчик == 3)
+                    if (clk_div_counter == 2'd3) begin
                         spi_mosi     <= shift_reg_tx[7];
                         shift_reg_tx <= {shift_reg_tx[6:0], 1'b0};
                         bit_cnt      <= bit_cnt - 4'd1;
                     end
 
-                    // Захватываем MISO на переднем фронте SPI_CLK
-                    if (!spi_clk_prev && spi_clk) begin
+                    // Захватываем MISO на переднем фронте SPI_CLK (счётчик == 1)
+                    if (clk_div_counter == 2'd1) begin
                         shift_reg_rx <= {shift_reg_rx[6:0], spi_miso};
                     end
 
-                    // Завершение передачи
-                    if (bit_cnt == 4'd0 && spi_clk_prev && !spi_clk) begin
+                    // Завершение передачи: когда bit_cnt == 0 И мы на спадающем фронте
+                    if (bit_cnt == 4'd0 && clk_div_counter == 2'd3) begin
                         spi_cs    <= 1'b1;
                         spi_clk   <= 1'b0;
                         rx_data   <= shift_reg_rx;
