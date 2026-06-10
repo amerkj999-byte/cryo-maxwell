@@ -1,0 +1,32 @@
+// pi_controller.v — ИСПРАВЛЕНО (10 бит)
+module pi_controller (
+    input  wire         clk,
+    input  wire         rst_n,
+    input  wire [13:0]  current_in,
+    input  wire [13:0]  target_current,
+    output reg  [9:0]   pwm_duty       // 10 бит (0–799)
+);
+    parameter Kp = 8'h20;
+    parameter Ki = 8'h04;
+
+    reg [31:0] integral;
+    reg [31:0] error;
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            integral <= 32'd0;
+            pwm_duty <= 10'd0;
+        end else begin
+            error = target_current - current_in;
+
+            // Антивиндовка
+            if (pwm_duty < 10'd799 && pwm_duty > 10'd0)
+                integral <= integral + Ki * error;
+
+            pwm_duty <= Kp * error + integral;
+
+            // Ограничение выхода
+            if (pwm_duty > 10'd799) pwm_duty <= 10'd799;
+        end
+    end
+endmodule

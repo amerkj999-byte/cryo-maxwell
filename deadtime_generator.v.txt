@@ -1,0 +1,44 @@
+// deadtime_generator.v
+// Мёртвое время 300 нс для SiC MOSFET
+module deadtime_generator (
+    input  wire         clk_200m,   // 200 МГц (5 нс/тик)
+    input  wire         rst_n,
+    input  wire         pwm_in,
+    output reg          pwm_high,
+    output reg          pwm_low
+);
+    parameter DEADTIME_TICKS = 60; // 300 нс / 5 нс = 60 тиков
+
+    reg [7:0] deadtime_counter;
+    reg       pwm_delayed;
+
+    always @(posedge clk_200m or negedge rst_n) begin
+        if (!rst_n) begin
+            pwm_high         <= 1'b0;
+            pwm_low          <= 1'b0;
+            pwm_delayed      <= 1'b0;
+            deadtime_counter <= 8'd0;
+        end else begin
+            pwm_delayed <= pwm_in;
+
+            // Передний фронт: задержка включения верхнего ключа
+            if (pwm_in && !pwm_delayed) begin
+                deadtime_counter <= DEADTIME_TICKS;
+                pwm_low          <= 1'b0;
+            end
+
+            // Задний фронт: задержка включения нижнего ключа
+            if (!pwm_in && pwm_delayed) begin
+                deadtime_counter <= DEADTIME_TICKS;
+                pwm_high         <= 1'b0;
+            end
+
+            if (deadtime_counter > 0)
+                deadtime_counter <= deadtime_counter - 8'd1;
+            else begin
+                pwm_high <= pwm_in;
+                pwm_low  <= ~pwm_in;
+            end
+        end
+    end
+endmodule

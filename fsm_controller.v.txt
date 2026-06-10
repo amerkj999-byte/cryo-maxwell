@@ -1,0 +1,85 @@
+// fsm_controller.v
+// FSM: Ожидание / Сжатие (КЗ) / ВМТ / Отбой (Рекуперация) / Виртуальный резистор
+module fsm_controller (
+    input  wire         clk,
+    input  wire         rst_n,
+    input  wire [31:0]  velocity,
+    input  wire [31:0]  position,
+    input  wire [13:0]  current,
+    input  wire         osc_detected,
+    output reg  [2:0]   mode,       // 0-ожидание, 1-КЗ, 2-ВМТ, 3-рекуп, 4-VR
+    output reg          brake_en,
+    output reg          rect_en,
+    output reg          vr_en
+);
+    parameter MODE_IDLE     = 3'd0;
+    parameter MODE_SHORT    = 3'd1;
+    parameter MODE_TDC      = 3'd2;
+    parameter MODE_RECTIFY  = 3'd3;
+    parameter MODE_VR       = 3'd4;
+
+    parameter V_THRESH_UP   = 32'h3F000000; // 0.5 м/с
+    parameter V_THRESH_DOWN = 32'h3E99999A; // 0.3 м/с
+    parameter TDC_POS       = 32'd80000;    // 80 мм (ВМТ)
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            mode     <= MODE_IDLE;
+            brake_en <= 1'b0;
+            rect_en  <= 1'b0;
+            vr_en    <= 1'b0;
+        end else begin
+            // Приоритет: осцилляции → VR
+            if (osc_detected) begin
+                mode     <= MODE_VR;
+                brake_en <= 1'b0;
+                rect_en  <= 1'b0;
+                vr_en    <= 1'b1;
+            end else begin
+                case (mode)
+                    MODE_IDLE: begin
+                        brake_en <= 1'b0;
+                        rect_en  <= 1'b0;
+                        vr_en    <= 1'b0;
+                        if (velocity > V_THRESH_UP && velocity[31] == 1'b0)
+                            mode <= MODE_SHORT; // движение вверх
+                        else if (velocity < -V_THRESH_DOWN)
+                            mode <= MODE_RECTIFY; // движение вниз
+                    end
+
+                    MODE_SHORT: begin
+                        brake_en <= 1'b1;
+                        rect_en  <= 1'b0;
+                        vr_en    <= 1'b0;
+                        if (position >= TDC_POS && current < 14'd100)
+                            mode <= MODE_TDC;
+                    end
+
+                    MODE_TDC: begin
+                        brake_en <= 1'b0;
+                        rect_en  <= 1'b0;
+                        vr_en    <= 1'b0;
+                        if (velocity < -V_THRESH_DOWN)
+                            mode <= MODE_RECTIFY;
+                    end
+
+                    MODE_RECTIFY: begin
+                        brake_en <= 1'b0;
+                        rect_en  <= 1'b1;
+                        vr_en    <= 1'b0;
+                        if (velocity == 32'd0)
+                            mode <= MODE_IDLE;
+                    end
+
+                    MODE_VR: begin
+                        brake_en <= 1'b0;
+                        rect_en  <= 1'b0;
+                        vr_en    <= 1'b1;
+                        if (!osc_detected && velocity == 32'd0)
+                            mode <= MODE_IDLE;
+                    end
+                endcase
+            end
+        end
+    end
+endmodule

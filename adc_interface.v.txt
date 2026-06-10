@@ -1,0 +1,30 @@
+// adc_interface.v
+// Интерфейс AD9248 (14 бит, 65 MSPS, LVDS)
+module adc_interface (
+    input  wire         clk_200m,
+    input  wire         rst_n,
+    input  wire         adc_clk_p,  // такт от АЦП
+    input  wire [13:0]  adc_data_p, // данные АЦП (LVDS)
+    output reg  [13:0]  current_a,
+    output reg  [13:0]  current_b,
+    output reg  [13:0]  current_c
+);
+    // Демультиплексирование трёх фаз (АЦП мультиплексирует 3 канала)
+    reg [1:0] channel_sel;
+
+    always @(posedge adc_clk_p or negedge rst_n) begin
+        if (!rst_n) begin
+            channel_sel <= 2'd0;
+            current_a   <= 14'd0;
+            current_b   <= 14'd0;
+            current_c   <= 14'd0;
+        end else begin
+            case (channel_sel)
+                2'd0: current_a <= adc_data_p;
+                2'd1: current_b <= adc_data_p;
+                2'd2: current_c <= adc_data_p;
+            endcase
+            channel_sel <= (channel_sel == 2'd2) ? 2'd0 : channel_sel + 2'd1;
+        end
+    end
+endmodule

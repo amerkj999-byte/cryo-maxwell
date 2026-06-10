@@ -1,0 +1,38 @@
+// braking_ramp.v — синтезируемая версия (fixed-point)
+module braking_ramp (
+    input  wire         clk,
+    input  wire         rst_n,
+    input  wire [31:0]  velocity,    // Q16.16
+    output reg  [9:0]   duty_cycle   // 0–799
+);
+    // Пороги скорости в Q16.16
+    parameter V_MAX    = 32'h00080000; // 0.5 м/с = 32768 в Q16.16
+    parameter V_MIN    = 32'h00033333; // 0.2 м/с
+    parameter DUTY_MAX = 10'd799;
+    parameter DUTY_MIN = 10'd160;
+
+    wire [31:0] v_abs = velocity[31] ? -velocity : velocity;
+    reg [31:0] numerator;
+    reg [31:0] denominator;
+    reg [31:0] ratio;
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            duty_cycle <= DUTY_MAX;
+            numerator <= 32'd0;
+            denominator <= 32'd1;
+            ratio <= 32'd0;
+        end else begin
+            if (v_abs > V_MAX)
+                duty_cycle <= DUTY_MAX;
+            else if (v_abs < V_MIN)
+                duty_cycle <= DUTY_MIN;
+            else begin
+                numerator   <= (v_abs - V_MIN) * (DUTY_MAX - DUTY_MIN);
+                denominator <= V_MAX - V_MIN;
+                ratio       <= numerator / denominator;
+                duty_cycle  <= DUTY_MIN + ratio[9:0];
+            end
+        end
+    end
+endmodule

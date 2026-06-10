@@ -1,0 +1,215 @@
+// top.v — Cryo-Maxwell V3.0 Active Damper Controller
+module top (
+    // Системные
+    input  wire         clk_200m_p,   // 200 МГц дифференциальный
+    input  wire         clk_200m_n,
+    input  wire         rst_n,
+
+    // Интерферометр
+    input  wire         inter_A,
+    input  wire         inter_B,
+    input  wire         inter_Z,
+
+    // АЦП (LVDS)
+    input  wire         adc_clk_p,
+    input  wire [13:0]  adc_data_p,
+
+    // Драйверы ключей (3 фазы × 2 ключа)
+    output wire         phase_A_high,
+    output wire         phase_A_low,
+    output wire         phase_B_high,
+    output wire         phase_B_low,
+    output wire         phase_C_high,
+    output wire         phase_C_low,
+
+    // CAN/SPI интерфейс
+    output wire         spi_cs,
+    output wire         spi_clk,
+    output wire         spi_mosi,
+    input  wire         spi_miso,
+    output wire         fault_led,
+    output wire         heartbeat_led
+);
+
+    // Внутренние сигналы
+    wire        clk_200m, clk_4m;
+    wire [31:0] position_raw, position_filt, velocity_filt;
+    wire        index_pulse;
+    wire [13:0] current_a, current_b, current_c;
+    wire        osc_detected;
+    wire [9:0]  duty_cycle;        // ИСПРАВЛЕНО: 10 бит
+    wire [2:0]  mode;
+    wire        brake_en, rect_en, vr_en;
+    wire [9:0]  pwm_duty;          // ИСПРАВЛЕНО: 10 бит
+    wire        fault, shutdown;
+    wire        phase_A_raw, phase_B_raw, phase_C_raw;  // ДОБАВЛЕНО
+
+    // Дифференциальный буфер такта
+    IBUFGDS #(.DIFF_TERM("TRUE")) clk_buf (
+        .I(clk_200m_p),
+        .IB(clk_200m_n),
+        .O(clk_200m)
+    );
+
+    // Делитель 200 МГц → 4 МГц
+    clk_divider u_clk_div (
+        .clk_200m(clk_200m),
+        .rst_n(rst_n),
+        .clk_4m(clk_4m)
+    );
+
+    // Декодер интерферометра
+    interferometer_decoder u_inter (
+        .clk(clk_200m),
+        .rst_n(rst_n),
+        .A(inter_A),
+        .B(inter_B),
+        .Z(inter_Z),
+        .position(position_raw),
+        .index_pulse(index_pulse)
+    );
+
+    // Фильтр Калмана
+    kalman_filter u_kalman (
+        .clk(clk_200m),
+        .rst_n(rst_n),
+        .position_in(position_raw),
+        .position_out(position_filt),
+        .velocity_out(velocity_filt)
+    );
+
+    // Интерфейс АЦП
+    adc_interface u_adc (
+        .clk_200m(clk_200m),
+        .rst_n(rst_n),
+        .adc_clk_p(adc_clk_p),
+        .adc_data_p(adc_data_p),
+        .current_a(current_a),
+        .current_b(current_b),
+        .current_c(current_c)
+    );
+
+    // Детектор осцилляций
+    osc_detector u_osc (
+        .clk_4m(clk_4m),
+        .rst_n(rst_n),
+        .velocity(velocity_filt),
+        .osc_detected(osc_detected)
+    );
+
+    // Генератор рампы торможения
+    braking_ramp u_braking (
+        .clk(clk_200m),
+        .rst_n(rst_n),
+        .velocity(velocity_filt),
+        .duty_cycle(duty_cycle)
+    );
+
+    // Конечный автомат
+    fsm_controller u_fsm (
+        .clk(clk_200m),
+        .rst_n(rst_n),
+        .velocity(velocity_filt),
+        .position(position_filt),
+        .current(current_a),
+        .osc_detected(osc_detected),
+        .mode(mode),
+        .brake_en(brake_en),
+        .rect_en(rect_en),
+        .vr_en(vr_en)
+    );
+
+    // PI-регулятор
+    pi_controller u_pi (
+        .clk(clk_200m),
+        .rst_n(rst_n),
+        .current_in(current_a),
+        .target_current(14'd5000), // калибруется
+        .pwm_duty(pwm_duty)
+    );
+
+    // Мультиплексор ШИМ (braking ramp / PI / 0)
+    reg [9:0] pwm_muxed;
+    always @(*) begin
+        if (shutdown)
+            pwm_muxed = 10'd0;
+        else if (brake_en)
+            pwm_muxed = duty_cycle;
+        else if (vr_en)
+            pwm_muxed = pwm_duty;
+        else if (rect_en)
+            pwm_muxed = 10'd0; // Синхронное выпрямление — отдельная логика
+        else
+            pwm_muxed = 10'd0;
+    end
+
+    // ШИМ-генератор
+    pwm_module u_pwm (
+        .clk(clk_200m),
+        .rst_n(rst_n),
+        .duty_a(pwm_muxed),
+        .duty_b(pwm_muxed),
+        .duty_c(pwm_muxed),
+        .pwm_a(phase_A_raw),
+        .pwm_b(phase_B_raw),
+        .pwm_c(phase_C_raw)
+    );
+
+    // Мёртвое время (фаза A)
+    deadtime_generator u_dt_a (
+        .clk_200m(clk_200m),
+        .rst_n(rst_n),
+        .pwm_in(phase_A_raw),
+        .pwm_high(phase_A_high),
+        .pwm_low(phase_A_low)
+    );
+
+    // Мёртвое время (фаза B)
+    deadtime_generator u_dt_b (
+        .clk_200m(clk_200m),
+        .rst_n(rst_n),
+        .pwm_in(phase_B_raw),
+        .pwm_high(phase_B_high),
+        .pwm_low(phase_B_low)
+    );
+
+    // Мёртвое время (фаза C)
+    deadtime_generator u_dt_c (
+        .clk_200m(clk_200m),
+        .rst_n(rst_n),
+        .pwm_in(phase_C_raw),
+        .pwm_high(phase_C_high),
+        .pwm_low(phase_C_low)
+    );
+
+    // Защита по току
+    overcurrent_protect u_protect (
+        .clk(clk_200m),
+        .rst_n(rst_n),
+        .current_a(current_a),
+        .current_b(current_b),
+        .current_c(current_c),
+        .fault(fault),
+        .shutdown(shutdown)
+    );
+
+    // CAN интерфейс
+    can_interface u_can (
+        .clk(clk_200m),
+        .rst_n(rst_n),
+        .position(position_filt),
+        .velocity(velocity_filt),
+        .current_a(current_a),
+        .current_b(current_b),
+        .current_c(current_c),
+        .mode(mode),
+        .spi_cs(spi_cs),
+        .spi_clk(spi_clk),
+        .spi_mosi(spi_mosi)
+    );
+
+    // Индикация
+    assign fault_led     = fault;
+    assign heartbeat_led = clk_4m; // мигает 2 МГц
+
+endmodule

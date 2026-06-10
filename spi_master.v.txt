@@ -1,0 +1,90 @@
+// spi_master.v
+// Простой SPI мастер для связи с ARM (STM32H743)
+// Режим 0: CPOL=0 (clk idle low), CPHA=0 (выборка по переднему фронту)
+module spi_master (
+    input  wire         clk,
+    input  wire         rst_n,
+    input  wire [7:0]   tx_data,
+    input  wire         tx_valid,
+    output reg          tx_ready,
+    output reg          spi_cs,
+    output reg          spi_clk,
+    output reg          spi_mosi,
+    input  wire         spi_miso,
+    output reg  [7:0]   rx_data,
+    output reg          rx_valid
+);
+    // Состояния
+    parameter IDLE       = 2'd0;
+    parameter TRANSFER   = 2'd1;
+
+    reg [1:0] state;
+    reg [3:0] bit_cnt;
+    reg [7:0] shift_reg_tx;
+    reg [7:0] shift_reg_rx;
+    reg       spi_clk_prev;
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            state        <= IDLE;
+            spi_cs       <= 1'b1;
+            spi_clk      <= 1'b0;
+            spi_mosi     <= 1'b0;
+            bit_cnt      <= 4'd0;
+            tx_ready     <= 1'b1;
+            rx_valid     <= 1'b0;
+            rx_data      <= 8'd0;
+            shift_reg_tx <= 8'd0;
+            shift_reg_rx <= 8'd0;
+            spi_clk_prev <= 1'b0;
+        end else begin
+            spi_clk_prev <= spi_clk;
+            rx_valid     <= 1'b0; // импульс на 1 такт
+
+            case (state)
+                IDLE: begin
+                    spi_cs   <= 1'b1;
+                    spi_clk  <= 1'b0;
+                    tx_ready <= 1'b1;
+
+                    if (tx_valid && tx_ready) begin
+                        shift_reg_tx <= tx_data;
+                        shift_reg_rx <= 8'd0;
+                        bit_cnt      <= 4'd8;
+                        spi_cs       <= 1'b0;
+                        tx_ready     <= 1'b0;
+                        state        <= TRANSFER;
+                    end
+                end
+
+                TRANSFER: begin
+                    // Генерация тактов SPI_CLK (деление системного такта на 4)
+                    // Частота SPI = clk / 4
+                    spi_clk <= ~spi_clk;
+
+                    // Выставляем MOSI на спадающем фронте SPI_CLK
+                    if (spi_clk_prev && !spi_clk) begin
+                        spi_mosi     <= shift_reg_tx[7];
+                        shift_reg_tx <= {shift_reg_tx[6:0], 1'b0};
+                        bit_cnt      <= bit_cnt - 4'd1;
+                    end
+
+                    // Захватываем MISO на переднем фронте SPI_CLK
+                    if (!spi_clk_prev && spi_clk) begin
+                        shift_reg_rx <= {shift_reg_rx[6:0], spi_miso};
+                    end
+
+                    // Завершение передачи
+                    if (bit_cnt == 4'd0 && spi_clk_prev && !spi_clk) begin
+                        spi_cs    <= 1'b1;
+                        spi_clk   <= 1'b0;
+                        rx_data   <= shift_reg_rx;
+                        rx_valid  <= 1'b1;
+                        tx_ready  <= 1'b1;
+                        state     <= IDLE;
+                    end
+                end
+            endcase
+        end
+    end
+endmodule

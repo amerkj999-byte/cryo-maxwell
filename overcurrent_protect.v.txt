@@ -1,0 +1,29 @@
+// overcurrent_protect.v
+// Аппаратная защита по току (> 15 А)
+module overcurrent_protect (
+    input  wire         clk,
+    input  wire         rst_n,
+    input  wire [13:0]  current_a,
+    input  wire [13:0]  current_b,
+    input  wire [13:0]  current_c,
+    output reg          fault,
+    output reg          shutdown
+);
+    parameter I_MAX = 14'd15000; // 15 А в мА
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            fault    <= 1'b0;
+            shutdown <= 1'b0;
+        end else begin
+            if (current_a > I_MAX || current_b > I_MAX || current_c > I_MAX)
+                fault <= 1'b1;
+            else
+                fault <= 1'b0;
+
+            // Защёлка отключения (сброс только по rst_n)
+            if (fault)
+                shutdown <= 1'b1;
+        end
+    end
+endmodule

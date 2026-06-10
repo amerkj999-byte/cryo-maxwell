@@ -1,0 +1,43 @@
+// osc_detector.v
+// Zero-Crossing детектор паразитных осцилляций
+// Окно 1 мс на 4 МГц, порог 3 перехода через ноль
+module osc_detector (
+    input  wire         clk_4m,
+    input  wire         rst_n,
+    input  wire [31:0]  velocity,
+    output reg          osc_detected
+);
+    parameter WINDOW_TICKS = 4000;    // 1 мс при 4 МГц
+    parameter CROSS_THRESH = 3;       // порог переходов
+    parameter VEL_HYST     = 32'h3D4CCCCD; // 0.05 м/с гистерезис
+
+    reg [31:0] velocity_prev;
+    reg [7:0]  zero_cross_count;
+    reg [15:0] window_timer;
+
+    always @(posedge clk_4m or negedge rst_n) begin
+        if (!rst_n) begin
+            velocity_prev    <= 32'd0;
+            zero_cross_count <= 8'd0;
+            window_timer     <= 16'd0;
+            osc_detected     <= 1'b0;
+        end else begin
+            velocity_prev <= velocity;
+
+            // Детекция перехода с гистерезисом
+            if ((velocity_prev[31] != velocity[31]) &&
+                (velocity > VEL_HYST || velocity < -VEL_HYST) &&
+                (window_timer < WINDOW_TICKS))
+                zero_cross_count <= zero_cross_count + 8'd1;
+
+            // Скользящее окно
+            if (window_timer >= WINDOW_TICKS) begin
+                osc_detected     <= (zero_cross_count >= CROSS_THRESH);
+                zero_cross_count <= 8'd0;
+                window_timer     <= 16'd0;
+            end else begin
+                window_timer <= window_timer + 16'd1;
+            end
+        end
+    end
+endmodule
