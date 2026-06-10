@@ -1,4 +1,4 @@
-// pi_controller.v — ИСПРАВЛЕНО (10 бит)
+// pi_controller.v — ИСПРАВЛЕНО (защита от усечения)
 module pi_controller (
     input  wire         clk,
     input  wire         rst_n,
@@ -11,11 +11,13 @@ module pi_controller (
 
     reg [31:0] integral;
     reg [31:0] error;
+    reg [31:0] pwm_tmp;    // ДОБАВЛЕНО: временный регистр
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             integral <= 32'd0;
             pwm_duty <= 10'd0;
+            pwm_tmp  <= 32'd0;       // ДОБАВЛЕНО
         end else begin
             error = target_current - current_in;
 
@@ -23,10 +25,15 @@ module pi_controller (
             if (pwm_duty < 10'd799 && pwm_duty > 10'd0)
                 integral <= integral + Ki * error;
 
-            pwm_duty <= Kp * error + integral;
+            // Считаем во временный регистр
+            pwm_tmp <= Kp * error + integral;
 
-            // Ограничение выхода
-            if (pwm_duty > 10'd799) pwm_duty <= 10'd799;
+            // Ограничение на 32-битном уровне
+            if (pwm_tmp > 32'd799)
+                pwm_tmp <= 32'd799;
+
+            // Присваиваем младшие 10 бит
+            pwm_duty <= pwm_tmp[9:0];
         end
     end
 endmodule
