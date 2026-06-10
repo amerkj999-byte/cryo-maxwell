@@ -18,8 +18,9 @@ module fsm_controller (
     parameter MODE_RECTIFY  = 3'd3;
     parameter MODE_VR       = 3'd4;
 
-    parameter V_THRESH_UP   = 32'h3F000000; // 0.5 м/с
-    parameter V_THRESH_DOWN = 32'h3E99999A; // 0.3 м/с
+    // Пороги скорости в Q16.16 (ИСПРАВЛЕНО)
+    parameter V_THRESH_UP   = 32'h00008000; // 0.5 м/с в Q16.16 = 32768
+    parameter V_THRESH_DOWN = 32'h00004CCD; // 0.3 м/с в Q16.16 = 19661
     parameter TDC_POS       = 32'd80000;    // 80 мм (ВМТ)
 
     always @(posedge clk or negedge rst_n) begin
