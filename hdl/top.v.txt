@@ -1,4 +1,11 @@
 // top.v — Cryo-Maxwell V3.0 Active Damper Controller
+// Исправления:
+// 1. signed-порты для Q16.16 (fsm_controller, osc_detector_ce, pi_controller)
+// 2. LVDS-буферы для АЦП (adc_clk_n, adc_data_n)
+// 3. Асинхронное гашение ключей через shutdown_async
+// 4. Clock Enable вместо Gated Clock (osc_detector_ce)
+// 5. Убран clk_divider
+// 6. heartbeat_led на счётчике
 module top (
     // Системные
     input  wire         clk_200m_p,   // 200 МГц дифференциальный
@@ -10,9 +17,11 @@ module top (
     input  wire         inter_B,
     input  wire         inter_Z,
 
-    // АЦП (LVDS)
+    // АЦП (LVDS) — полные дифференциальные пары
     input  wire         adc_clk_p,
+    input  wire         adc_clk_n,      // ДОБАВЛЕНО
     input  wire [13:0]  adc_data_p,
+    input  wire [13:0]  adc_data_n,     // ДОБАВЛЕНО
 
     // Драйверы ключей (3 фазы × 2 ключа)
     output wire         phase_A_high,
@@ -32,33 +41,59 @@ module top (
 );
 
     // Внутренние сигналы
-    wire        clk_200m, clk_4m;
-    wire [31:0] position_raw, position_filt, velocity_filt;
-    wire        index_pulse;
-    wire [13:0] current_a, current_b, current_c;
-    wire        osc_detected;
-    wire [9:0]  duty_cycle;        // ИСПРАВЛЕНО: 10 бит
-    wire [2:0]  mode;
-    wire        brake_en, rect_en, vr_en;
-    wire [9:0]  pwm_duty;          // ИСПРАВЛЕНО: 10 бит
-    wire        fault, shutdown;
-    wire        phase_A_raw, phase_B_raw, phase_C_raw;  // ДОБАВЛЕНО
+    wire                clk_200m;
+    wire signed [31:0]  position_raw;      // ИСПРАВЛЕНО: signed
+    wire signed [31:0]  position_filt;     // ИСПРАВЛЕНО: signed
+    wire signed [31:0]  velocity_filt;     // ИСПРАВЛЕНО: signed
+    wire                index_pulse;
+    wire        [13:0]  current_a, current_b, current_c;
+    wire                osc_detected;
+    wire        [9:0]   duty_cycle;
+    wire        [2:0]   mode;
+    wire                brake_en, rect_en, vr_en;
+    wire        [9:0]   pwm_duty;
+    wire                fault, shutdown;
+    wire                shutdown_async;    // ДОБАВЛЕНО
+    wire                phase_A_raw, phase_B_raw, phase_C_raw;
 
-    // Дифференциальный буфер такта
+    // Сигналы после LVDS-буферов
+    wire                adc_clk_se;        // ДОБАВЛЕНО
+    wire        [13:0]  adc_data_se;       // ДОБАВЛЕНО
+
+    // =================================================================
+    // Дифференциальный буфер системного такта
+    // =================================================================
     IBUFGDS #(.DIFF_TERM("TRUE")) clk_buf (
         .I(clk_200m_p),
         .IB(clk_200m_n),
         .O(clk_200m)
     );
 
-    // Делитель 200 МГц → 4 МГц
-    clk_divider u_clk_div (
-        .clk_200m(clk_200m),
-        .rst_n(rst_n),
-        .clk_4m(clk_4m)
+    // =================================================================
+    // Дифференциальные буферы АЦП (ДОБАВЛЕНО)
+    // =================================================================
+    // Такт АЦП
+    IBUFGDS #(.DIFF_TERM("TRUE")) adc_clk_buf (
+        .I(adc_clk_p),
+        .IB(adc_clk_n),
+        .O(adc_clk_se)
     );
 
+    // Данные АЦП (14 бит)
+    genvar i;
+    generate
+        for (i = 0; i < 14; i = i + 1) begin : adc_data_buf
+            IBUFDS #(.DIFF_TERM("TRUE")) adc_data_buf_inst (
+                .I(adc_data_p[i]),
+                .IB(adc_data_n[i]),
+                .O(adc_data_se[i])
+            );
+        end
+    endgenerate
+
+    // =================================================================
     // Декодер интерферометра
+    // =================================================================
     interferometer_decoder u_inter (
         .clk(clk_200m),
         .rst_n(rst_n),
@@ -69,7 +104,9 @@ module top (
         .index_pulse(index_pulse)
     );
 
+    // =================================================================
     // Фильтр Калмана
+    // =================================================================
     kalman_filter u_kalman (
         .clk(clk_200m),
         .rst_n(rst_n),
@@ -78,26 +115,32 @@ module top (
         .velocity_out(velocity_filt)
     );
 
-    // Интерфейс АЦП
+    // =================================================================
+    // Интерфейс АЦП (теперь заходит single-ended после IBUFDS)
+    // =================================================================
     adc_interface u_adc (
         .clk_200m(clk_200m),
         .rst_n(rst_n),
-        .adc_clk_p(adc_clk_p),
-        .adc_data_p(adc_data_p),
+        .adc_clk_p(adc_clk_se),      // ИСПРАВЛЕНО: single-ended
+        .adc_data_p(adc_data_se),    // ИСПРАВЛЕНО: single-ended
         .current_a(current_a),
         .current_b(current_b),
         .current_c(current_c)
     );
 
-    // Детектор осцилляций
-    osc_detector u_osc (
-        .clk_4m(clk_4m),
+    // =================================================================
+    // Детектор осцилляций (Clock Enable, без Gated Clock)
+    // =================================================================
+    osc_detector_ce u_osc (
+        .clk_200m(clk_200m),
         .rst_n(rst_n),
         .velocity(velocity_filt),
         .osc_detected(osc_detected)
     );
 
+    // =================================================================
     // Генератор рампы торможения
+    // =================================================================
     braking_ramp u_braking (
         .clk(clk_200m),
         .rst_n(rst_n),
@@ -105,7 +148,9 @@ module top (
         .duty_cycle(duty_cycle)
     );
 
+    // =================================================================
     // Конечный автомат
+    // =================================================================
     fsm_controller u_fsm (
         .clk(clk_200m),
         .rst_n(rst_n),
@@ -119,16 +164,20 @@ module top (
         .vr_en(vr_en)
     );
 
+    // =================================================================
     // PI-регулятор
+    // =================================================================
     pi_controller u_pi (
         .clk(clk_200m),
         .rst_n(rst_n),
         .current_in(current_a),
-        .target_current(14'd5000), // калибруется
+        .target_current(14'sd5000),     // калибруется
         .pwm_duty(pwm_duty)
     );
 
+    // =================================================================
     // Мультиплексор ШИМ (braking ramp / PI / 0)
+    // =================================================================
     reg [9:0] pwm_muxed;
     always @(*) begin
         if (shutdown)
@@ -138,14 +187,16 @@ module top (
         else if (vr_en)
             pwm_muxed = pwm_duty;
         else if (rect_en)
-            pwm_muxed = 10'd0; // Синхронное выпрямление — отдельная логика
+            pwm_muxed = 10'd0;
         else
             pwm_muxed = 10'd0;
     end
 
+    // =================================================================
     // ШИМ-генератор
+    // =================================================================
     pwm_module u_pwm (
-        .clk(clk_200m),
+        .pwm_clk(clk_200m),
         .rst_n(rst_n),
         .duty_a(pwm_muxed),
         .duty_b(pwm_muxed),
@@ -155,34 +206,39 @@ module top (
         .pwm_c(phase_C_raw)
     );
 
-    // Мёртвое время (фаза A)
+    // =================================================================
+    // Мёртвое время + асинхронное гашение (shutdown_async)
+    // =================================================================
     deadtime_generator u_dt_a (
         .clk_200m(clk_200m),
         .rst_n(rst_n),
         .pwm_in(phase_A_raw),
+        .shutdown_async(shutdown_async),   // ДОБАВЛЕНО
         .pwm_high(phase_A_high),
         .pwm_low(phase_A_low)
     );
 
-    // Мёртвое время (фаза B)
     deadtime_generator u_dt_b (
         .clk_200m(clk_200m),
         .rst_n(rst_n),
         .pwm_in(phase_B_raw),
+        .shutdown_async(shutdown_async),   // ДОБАВЛЕНО
         .pwm_high(phase_B_high),
         .pwm_low(phase_B_low)
     );
 
-    // Мёртвое время (фаза C)
     deadtime_generator u_dt_c (
         .clk_200m(clk_200m),
         .rst_n(rst_n),
         .pwm_in(phase_C_raw),
+        .shutdown_async(shutdown_async),   // ДОБАВЛЕНО
         .pwm_high(phase_C_high),
         .pwm_low(phase_C_low)
     );
 
-    // Защита по току
+    // =================================================================
+    // Защита по току (с асинхронным выходом)
+    // =================================================================
     overcurrent_protect u_protect (
         .clk(clk_200m),
         .rst_n(rst_n),
@@ -190,10 +246,13 @@ module top (
         .current_b(current_b),
         .current_c(current_c),
         .fault(fault),
-        .shutdown(shutdown)
+        .shutdown(shutdown),
+        .shutdown_async(shutdown_async)    // ДОБАВЛЕНО
     );
 
+    // =================================================================
     // CAN интерфейс
+    // =================================================================
     can_interface u_can (
         .clk(clk_200m),
         .rst_n(rst_n),
@@ -208,8 +267,19 @@ module top (
         .spi_mosi(spi_mosi)
     );
 
+    // =================================================================
     // Индикация
-    assign fault_led     = fault;
-    assign heartbeat_led = clk_4m; // мигает 2 МГц
+    // =================================================================
+    assign fault_led = fault;
+
+    // heartbeat_led: мигание ~1.5 Гц (200 МГц / 2^26 ≈ 3 Гц период)
+    reg [25:0] heartbeat_cnt;
+    always @(posedge clk_200m or negedge rst_n) begin
+        if (!rst_n)
+            heartbeat_cnt <= 26'd0;
+        else
+            heartbeat_cnt <= heartbeat_cnt + 26'd1;
+    end
+    assign heartbeat_led = heartbeat_cnt[25];
 
 endmodule
