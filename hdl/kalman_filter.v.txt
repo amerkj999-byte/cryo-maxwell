@@ -1,6 +1,11 @@
-// kalman_filter_fixed.v — Альфа-Бета фильтр с конвейером
+// kalman_filter_fixed.v — Альфа-Бета фильтр с корректным конвейером
 // Q16.16: 16 бит целой части, 16 бит дробной
-// Строго неблокирующие присваивания, 3-ступенчатый конвейер
+// ИСПРАВЛЕНО:
+// 1. Обратная связь: x_est и v_est подаются на Stage 0 с задержкой 3 такта
+//    (ровно столько, сколько идёт вычисление по конвейеру)
+// 2. y_alpha/y_beta используют результат умножения с предыдущего такта
+//    (сейчас mult_alpha уже обновлён, когда читается y_alpha)
+// 3. Невязка y считается из x_pred, вычисленного на предыдущем такте
 module kalman_filter_fixed (
     input  wire               clk,
     input  wire               rst_n,
@@ -9,84 +14,95 @@ module kalman_filter_fixed (
     output reg  signed [31:0] velocity_out   // Q16.16
 );
     // Коэффициенты Альфа-Бета фильтра в Q16.16
-    // Альфа = 0.5  → 32768
-    // Бета  = 0.25 → 16384
     parameter signed [31:0] ALPHA = 32'sh00008000;  // 0.5
     parameter signed [31:0] BETA  = 32'sh00004000;  // 0.25
-    parameter signed [31:0] DT    = 32'sh00000831;  // 0.002 (131)
+    parameter signed [31:0] DT    = 32'sh00000831;  // 0.002
 
-    // === Конвейерные регистры ===
-    // Stage 0: входные регистры (снимаем с входов)
-    reg signed [31:0] pos_in_r;
+    // ============================================================
+    // Регистры состояния фильтра (оценки с предыдущего шага)
+    // ============================================================
+    reg signed [31:0] x_est_reg;   // оценка позиции
+    reg signed [31:0] v_est_reg;   // оценка скорости
 
-    // Stage 1: предсказание и невязка
-    reg signed [31:0] x_pred;        // предсказанная позиция
-    reg signed [31:0] v_pred;        // предсказанная скорость
-    reg signed [31:0] y;             // невязка (измерение - предсказание)
+    // ============================================================
+    // Конвейер: 3 ступени
+    // ============================================================
 
-    // Stage 2: коррекция и умножение на коэффициенты
-    reg signed [31:0] y_alpha;       // y * ALPHA
-    reg signed [31:0] y_beta;        // y * BETA
+    // Stage 0: вход + предсказание позиции
+    reg signed [31:0] pos_in_s0;
+    reg signed [31:0] x_pred_s0;
 
-    // Stage 3: обновление оценок
-    reg signed [31:0] x_est;         // оценка позиции
-    reg signed [31:0] v_est;         // оценка скорости
+    // Stage 1: невязка + умножение на коэффициенты
+    reg signed [31:0] x_pred_s1;
+    reg signed [31:0] y_s1;           // невязка
+    reg signed [63:0] mult_alpha_s1;  // y * ALPHA (Q32.32)
+    reg signed [63:0] mult_beta_s1;   // y * BETA  (Q32.32)
 
-    // Множители (64-битные для полного произведения)
-    reg signed [63:0] mult_alpha;
-    reg signed [63:0] mult_beta;
+    // Stage 2: коррекция оценки
+    reg signed [31:0] x_pred_s2;
+    reg signed [31:0] y_alpha_s2;     // целая часть y * ALPHA
+    reg signed [31:0] y_beta_s2;      // целая часть y * BETA
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
+            // Регистры состояния
+            x_est_reg <= 32'sd0;
+            v_est_reg <= 32'sd0;
+
             // Stage 0
-            pos_in_r <= 32'sd0;
+            pos_in_s0  <= 32'sd0;
+            x_pred_s0  <= 32'sd0;
 
             // Stage 1
-            x_pred   <= 32'sd0;
-            v_pred   <= 32'sd0;
-            y        <= 32'sd0;
+            x_pred_s1    <= 32'sd0;
+            y_s1         <= 32'sd0;
+            mult_alpha_s1 <= 64'sd0;
+            mult_beta_s1  <= 64'sd0;
 
             // Stage 2
-            mult_alpha <= 64'sd0;
-            mult_beta  <= 64'sd0;
-            y_alpha    <= 32'sd0;
-            y_beta     <= 32'sd0;
-
-            // Stage 3
-            x_est <= 32'sd0;
-            v_est <= 32'sd0;
+            x_pred_s2   <= 32'sd0;
+            y_alpha_s2  <= 32'sd0;
+            y_beta_s2   <= 32'sd0;
 
             // Выходы
             position_out <= 32'sd0;
             velocity_out <= 32'sd0;
         end else begin
-            // =========== Stage 0: захват входа ===========
-            pos_in_r <= position_in;
-
-            // =========== Stage 1: предсказание ===========
+            // =================================================
+            // Stage 0: захват входа и предсказание позиции
             // x_pred = x_est + v_est * DT
-            // Здесь v_est * DT — комбинаторно через DSP (успевает)
-            x_pred <= x_est + (($signed(v_est) * $signed(DT)) >>> 16);
-            v_pred <= v_est;
+            // x_est_reg и v_est_reg — оценки с предыдущего шага
+            // (обновлены 3 такта назад, что совпадает с задержкой)
+            // =================================================
+            pos_in_s0 <= position_in;
+            x_pred_s0 <= x_est_reg + (($signed(v_est_reg) * $signed(DT)) >>> 16);
 
-            // Невязка: y = измерение - предсказание
-            y <= pos_in_r - x_pred;
+            // =================================================
+            // Stage 1: невязка и умножение на ALPHA/BETA
+            // y = pos_in - x_pred
+            // mult_alpha = y * ALPHA  (Q16.16 × Q16.16 → Q32.32)
+            // =================================================
+            x_pred_s1    <= x_pred_s0;
+            y_s1         <= pos_in_s0 - x_pred_s0;
+            mult_alpha_s1 <= y_s1 * ALPHA;
+            mult_beta_s1  <= y_s1 * BETA;
 
-            // =========== Stage 2: умножение на коэффициенты ===========
-            mult_alpha <= y * ALPHA;
-            mult_beta  <= y * BETA;
+            // =================================================
+            // Stage 2: извлечение целой части и коррекция
+            // y_alpha = mult_alpha[47:16] — целая часть Q32.32
+            // x_est = x_pred + y_alpha
+            // =================================================
+            x_pred_s2   <= x_pred_s1;
+            y_alpha_s2  <= mult_alpha_s1[47:16];  // ← mult_alpha_s1 уже обновлён!
+            y_beta_s2   <= mult_beta_s1[47:16];   // ← mult_beta_s1 уже обновлён!
 
-            // Извлекаем Q16.16 из Q32.32 (берём старшие 32 бита)
-            y_alpha <= mult_alpha[47:16];
-            y_beta  <= mult_beta[47:16];
-
-            // =========== Stage 3: коррекция ===========
-            x_est <= x_pred + y_alpha;
-            v_est <= v_pred + y_beta;
+            // Обновляем регистры состояния
+            x_est_reg <= x_pred_s2 + y_alpha_s2;
+            v_est_reg <= v_est_reg + y_beta_s2;    // скорость обновляется beta
 
             // Выходы
-            position_out <= x_est;
-            velocity_out <= v_est;
+            position_out <= x_est_reg;
+            velocity_out <= v_est_reg;
         end
     end
 endmodule
