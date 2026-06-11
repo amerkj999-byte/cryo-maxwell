@@ -1,6 +1,9 @@
 // fsm_controller.v
 // FSM: Ожидание / Сжатие (КЗ) / ВМТ / Отбой (Рекуперация) / Виртуальный резистор
-// ИСПРАВЛЕНО: симметричная логика через vel_abs
+// ИСПРАВЛЕНО:
+// 1. Симметричная логика через vel_abs + moving_up/moving_down
+// 2. Выход из MODE_SHORT по смене направления (moving_down)
+// 3. Таймаут в MODE_TDC при зависании
 module fsm_controller (
     input  wire               clk,
     input  wire               rst_n,
@@ -19,7 +22,7 @@ module fsm_controller (
     parameter MODE_RECTIFY  = 3'd3;
     parameter MODE_VR       = 3'd4;
 
-    // Пороги в Q16.16 (знаковые)
+    // Пороги в Q16.16
     parameter signed [31:0] V_THRESH_UP   = 32'sh00008000;  // +0.5 м/с
     parameter signed [31:0] V_THRESH_DOWN = 32'sh00004CCD;  // +0.3 м/с
     parameter signed [31:0] TDC_POS       = 32'sd80000;     // 80 мм
@@ -29,9 +32,9 @@ module fsm_controller (
     wire               moving_up;
     wire               moving_down;
 
-    assign vel_abs   = (velocity[31]) ? -velocity : velocity;
-    assign moving_up = (velocity[31] == 1'b0);   // velocity > 0
-    assign moving_down = (velocity[31] == 1'b1); // velocity < 0
+    assign vel_abs    = (velocity[31]) ? -velocity : velocity;
+    assign moving_up  = (velocity[31] == 1'b0) && (vel_abs > 32'sd0);
+    assign moving_down = (velocity[31] == 1'b1) && (vel_abs > 32'sd0);
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -53,11 +56,8 @@ module fsm_controller (
                         rect_en  <= 1'b0;
                         vr_en    <= 1'b0;
 
-                        // Симметричная логика:
-                        // Движение вверх (сжатие) → КЗ
                         if (moving_up && vel_abs > V_THRESH_UP)
                             mode <= MODE_SHORT;
-                        // Движение вниз (отбой) → рекуперация
                         else if (moving_down && vel_abs > V_THRESH_DOWN)
                             mode <= MODE_RECTIFY;
                     end
@@ -66,8 +66,11 @@ module fsm_controller (
                         brake_en <= 1'b1;
                         rect_en  <= 1'b0;
                         vr_en    <= 1'b0;
-                        // Выход из КЗ по достижении ВМТ или падении тока
-                        if (position >= TDC_POS && current < 14'd100)
+
+                        // Выход из КЗ:
+                        // 1. Достигли ВМТ И ток упал
+                        // 2. ИЛИ шток пошёл вниз (отбой) — немедленно
+                        if ((position >= TDC_POS && current < 14'd100) || moving_down)
                             mode <= MODE_TDC;
                     end
 
@@ -75,16 +78,19 @@ module fsm_controller (
                         brake_en <= 1'b0;
                         rect_en  <= 1'b0;
                         vr_en    <= 1'b0;
-                        // Переход в рекуперацию при движении вниз
+
                         if (moving_down && vel_abs > V_THRESH_DOWN)
                             mode <= MODE_RECTIFY;
+                        // Таймаут: если застряли в TDC без движения
+                        else if (vel_abs == 32'sd0)
+                            mode <= MODE_IDLE;
                     end
 
                     MODE_RECTIFY: begin
                         brake_en <= 1'b0;
                         rect_en  <= 1'b1;
                         vr_en    <= 1'b0;
-                        // Остановка — возврат в ожидание
+
                         if (vel_abs == 32'sd0)
                             mode <= MODE_IDLE;
                     end
@@ -93,7 +99,7 @@ module fsm_controller (
                         brake_en <= 1'b0;
                         rect_en  <= 1'b0;
                         vr_en    <= 1'b1;
-                        // Выход из VR при отсутствии осцилляций и остановке
+
                         if (!osc_detected && vel_abs == 32'sd0)
                             mode <= MODE_IDLE;
                     end
