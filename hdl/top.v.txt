@@ -6,6 +6,9 @@
 // 4. Clock Enable вместо Gated Clock (osc_detector_ce)
 // 5. Убран clk_divider
 // 6. heartbeat_led на счётчике
+// 7. Три независимых ПИ-регулятора (фазы A, B, C)
+// 8. Три раздельных канала ШИМ (pwm_muxed_a/b/c)
+// 9. Имя модуля фильтра: kalman_filter_fixed
 module top (
     // Системные
     input  wire         clk_200m_p,   // 200 МГц дифференциальный
@@ -19,9 +22,9 @@ module top (
 
     // АЦП (LVDS) — полные дифференциальные пары
     input  wire         adc_clk_p,
-    input  wire         adc_clk_n,      // ДОБАВЛЕНО
+    input  wire         adc_clk_n,
     input  wire [13:0]  adc_data_p,
-    input  wire [13:0]  adc_data_n,     // ДОБАВЛЕНО
+    input  wire [13:0]  adc_data_n,
 
     // Драйверы ключей (3 фазы × 2 ключа)
     output wire         phase_A_high,
@@ -40,25 +43,29 @@ module top (
     output wire         heartbeat_led
 );
 
+    // =================================================================
     // Внутренние сигналы
+    // =================================================================
     wire                clk_200m;
-    wire signed [31:0]  position_raw;      // ИСПРАВЛЕНО: signed
-    wire signed [31:0]  position_filt;     // ИСПРАВЛЕНО: signed
-    wire signed [31:0]  velocity_filt;     // ИСПРАВЛЕНО: signed
+    wire signed [31:0]  position_raw;
+    wire signed [31:0]  position_filt;
+    wire signed [31:0]  velocity_filt;
     wire                index_pulse;
-    wire        [13:0]  current_a, current_b, current_c;
+    wire signed [13:0]  current_a, current_b, current_c;
     wire                osc_detected;
     wire        [9:0]   duty_cycle;
     wire        [2:0]   mode;
     wire                brake_en, rect_en, vr_en;
-    wire        [9:0]   pwm_duty;
+    wire        [9:0]   pwm_duty_a;
+    wire        [9:0]   pwm_duty_b;
+    wire        [9:0]   pwm_duty_c;
     wire                fault, shutdown;
-    wire                shutdown_async;    // ДОБАВЛЕНО
+    wire                shutdown_async;
     wire                phase_A_raw, phase_B_raw, phase_C_raw;
 
     // Сигналы после LVDS-буферов
-    wire                adc_clk_se;        // ДОБАВЛЕНО
-    wire        [13:0]  adc_data_se;       // ДОБАВЛЕНО
+    wire                adc_clk_se;
+    wire        [13:0]  adc_data_se;
 
     // =================================================================
     // Дифференциальный буфер системного такта
@@ -70,7 +77,7 @@ module top (
     );
 
     // =================================================================
-    // Дифференциальные буферы АЦП (ДОБАВЛЕНО)
+    // Дифференциальные буферы АЦП
     // =================================================================
     // Такт АЦП
     IBUFGDS #(.DIFF_TERM("TRUE")) adc_clk_buf (
@@ -105,9 +112,9 @@ module top (
     );
 
     // =================================================================
-    // Фильтр Калмана
+    // Альфа-Бета фильтр (конвейерный, Q16.16)
     // =================================================================
-    kalman_filter u_kalman (
+    kalman_filter_fixed u_kalman (
         .clk(clk_200m),
         .rst_n(rst_n),
         .position_in(position_raw),
@@ -116,13 +123,13 @@ module top (
     );
 
     // =================================================================
-    // Интерфейс АЦП (теперь заходит single-ended после IBUFDS)
+    // Интерфейс АЦП (после преобразования LVDS → single-ended)
     // =================================================================
     adc_interface u_adc (
         .clk_200m(clk_200m),
         .rst_n(rst_n),
-        .adc_clk_p(adc_clk_se),      // ИСПРАВЛЕНО: single-ended
-        .adc_data_p(adc_data_se),    // ИСПРАВЛЕНО: single-ended
+        .adc_clk_p(adc_clk_se),
+        .adc_data_p(adc_data_se),
         .current_a(current_a),
         .current_b(current_b),
         .current_c(current_c)
@@ -149,7 +156,7 @@ module top (
     );
 
     // =================================================================
-    // Конечный автомат
+    // Конечный автомат (симметричная логика сжатия/отбоя)
     // =================================================================
     fsm_controller u_fsm (
         .clk(clk_200m),
@@ -165,42 +172,70 @@ module top (
     );
 
     // =================================================================
-    // PI-регулятор
+    // PI-регуляторы — по одному на каждую фазу
     // =================================================================
-    pi_controller u_pi (
+    pi_controller u_pi_a (
         .clk(clk_200m),
         .rst_n(rst_n),
         .current_in(current_a),
-        .target_current(14'sd5000),     // калибруется
-        .pwm_duty(pwm_duty)
+        .target_current(14'sd5000),
+        .pwm_duty(pwm_duty_a)
+    );
+
+    pi_controller u_pi_b (
+        .clk(clk_200m),
+        .rst_n(rst_n),
+        .current_in(current_b),
+        .target_current(14'sd5000),
+        .pwm_duty(pwm_duty_b)
+    );
+
+    pi_controller u_pi_c (
+        .clk(clk_200m),
+        .rst_n(rst_n),
+        .current_in(current_c),
+        .target_current(14'sd5000),
+        .pwm_duty(pwm_duty_c)
     );
 
     // =================================================================
-    // Мультиплексор ШИМ (braking ramp / PI / 0)
+    // Мультиплексор ШИМ (braking ramp / PI×3 / 0)
     // =================================================================
-    reg [9:0] pwm_muxed;
+    reg [9:0] pwm_muxed_a, pwm_muxed_b, pwm_muxed_c;
+
     always @(*) begin
-        if (shutdown)
-            pwm_muxed = 10'd0;
-        else if (brake_en)
-            pwm_muxed = duty_cycle;
-        else if (vr_en)
-            pwm_muxed = pwm_duty;
-        else if (rect_en)
-            pwm_muxed = 10'd0;
-        else
-            pwm_muxed = 10'd0;
+        if (shutdown) begin
+            pwm_muxed_a = 10'd0;
+            pwm_muxed_b = 10'd0;
+            pwm_muxed_c = 10'd0;
+        end else if (brake_en) begin
+            pwm_muxed_a = duty_cycle;
+            pwm_muxed_b = duty_cycle;
+            pwm_muxed_c = duty_cycle;
+        end else if (vr_en) begin
+            pwm_muxed_a = pwm_duty_a;
+            pwm_muxed_b = pwm_duty_b;
+            pwm_muxed_c = pwm_duty_c;
+        end else if (rect_en) begin
+            pwm_muxed_a = 10'd0;
+            pwm_muxed_b = 10'd0;
+            pwm_muxed_c = 10'd0;
+        end else begin
+            pwm_muxed_a = 10'd0;
+            pwm_muxed_b = 10'd0;
+            pwm_muxed_c = 10'd0;
+        end
     end
 
     // =================================================================
-    // ШИМ-генератор
+    // ШИМ-генератор (три независимых канала)
     // =================================================================
     pwm_module u_pwm (
         .pwm_clk(clk_200m),
         .rst_n(rst_n),
-        .duty_a(pwm_muxed),
-        .duty_b(pwm_muxed),
-        .duty_c(pwm_muxed),
+        .duty_a(pwm_muxed_a),
+        .duty_b(pwm_muxed_b),
+        .duty_c(pwm_muxed_c),
         .pwm_a(phase_A_raw),
         .pwm_b(phase_B_raw),
         .pwm_c(phase_C_raw)
@@ -213,7 +248,7 @@ module top (
         .clk_200m(clk_200m),
         .rst_n(rst_n),
         .pwm_in(phase_A_raw),
-        .shutdown_async(shutdown_async),   // ДОБАВЛЕНО
+        .shutdown_async(shutdown_async),
         .pwm_high(phase_A_high),
         .pwm_low(phase_A_low)
     );
@@ -222,7 +257,7 @@ module top (
         .clk_200m(clk_200m),
         .rst_n(rst_n),
         .pwm_in(phase_B_raw),
-        .shutdown_async(shutdown_async),   // ДОБАВЛЕНО
+        .shutdown_async(shutdown_async),
         .pwm_high(phase_B_high),
         .pwm_low(phase_B_low)
     );
@@ -231,7 +266,7 @@ module top (
         .clk_200m(clk_200m),
         .rst_n(rst_n),
         .pwm_in(phase_C_raw),
-        .shutdown_async(shutdown_async),   // ДОБАВЛЕНО
+        .shutdown_async(shutdown_async),
         .pwm_high(phase_C_high),
         .pwm_low(phase_C_low)
     );
@@ -247,11 +282,11 @@ module top (
         .current_c(current_c),
         .fault(fault),
         .shutdown(shutdown),
-        .shutdown_async(shutdown_async)    // ДОБАВЛЕНО
+        .shutdown_async(shutdown_async)
     );
 
     // =================================================================
-    // CAN интерфейс
+    // CAN/SPI интерфейс
     // =================================================================
     can_interface u_can (
         .clk(clk_200m),
@@ -272,7 +307,6 @@ module top (
     // =================================================================
     assign fault_led = fault;
 
-    // heartbeat_led: мигание ~1.5 Гц (200 МГц / 2^26 ≈ 3 Гц период)
     reg [25:0] heartbeat_cnt;
     always @(posedge clk_200m or negedge rst_n) begin
         if (!rst_n)
