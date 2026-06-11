@@ -1,37 +1,48 @@
-// braking_ramp.v — синтезируемая версия (fixed-point)
+// braking_ramp.v — синтезируемая версия (fixed-point, без деления)
 module braking_ramp (
-    input  wire         clk,
-    input  wire         rst_n,
-    input  wire [31:0]  velocity,    // Q16.16
-    output reg  [9:0]   duty_cycle   // 0–799
+    input  wire               clk,
+    input  wire               rst_n,
+    input  wire signed [31:0] velocity,    // Q16.16
+    output reg  [9:0]         duty_cycle   // 0–799
 );
     // Пороги скорости в Q16.16
-    parameter V_MAX    = 32'h00080000; // 0.5 м/с = 32768 в Q16.16
-    parameter V_MIN    = 32'h00033333; // 0.2 м/с
+    parameter signed [31:0] V_MAX    = 32'sh00008000; // +0.5 м/с
+    parameter signed [31:0] V_MIN    = 32'sh00003333; // +0.2 м/с (13107)
     parameter DUTY_MAX = 10'd799;
     parameter DUTY_MIN = 10'd160;
 
-    wire [31:0] v_abs = velocity[31] ? -velocity : velocity;
-    reg [31:0] numerator;
-    reg [31:0] denominator;
-    reg [31:0] ratio;
+    // K = (DUTY_MAX - DUTY_MIN) / (V_MAX - V_MIN) в Q16.16
+    // K = 639 / 19661 * 65536 ≈ 2130
+    parameter signed [31:0] K = 32'sh00000852; // 2130 в Q16.16
 
+    wire signed [31:0] v_abs;
+    assign v_abs = (velocity[31]) ? -velocity : velocity;
+
+    reg signed [31:0] delta_v;    // v_abs - V_MIN
+    reg signed [63:0] mult_temp;  // delta_v * K (64 бита)
+    reg signed [31:0] duty_offset; // результат умножения в Q16.16
+
+    // Конвейер: Step 1 — вычитание и умножение
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            duty_cycle <= DUTY_MAX;
-            numerator <= 32'd0;
-            denominator <= 32'd1;
-            ratio <= 32'd0;
+            delta_v     <= 32'sd0;
+            mult_temp   <= 64'sd0;
+            duty_offset <= 32'sd0;
+            duty_cycle  <= DUTY_MAX;
         end else begin
-            if (v_abs > V_MAX)
+            // Step 1: вычисляем delta_v и умножаем на K
+            if (v_abs > V_MAX) begin
                 duty_cycle <= DUTY_MAX;
-            else if (v_abs < V_MIN)
+            end else if (v_abs < V_MIN) begin
                 duty_cycle <= DUTY_MIN;
-            else begin
-                numerator   <= (v_abs - V_MIN) * (DUTY_MAX - DUTY_MIN);
-                denominator <= V_MAX - V_MIN;
-                ratio       <= numerator / denominator;
-                duty_cycle  <= DUTY_MIN + ratio[9:0];
+            end else begin
+                delta_v   <= v_abs - V_MIN;
+                mult_temp <= delta_v * K;
+
+                // Step 2: извлекаем целую часть и добавляем DUTY_MIN
+                // mult_temp[47:16] — целая часть результата Q16.16 * Q16.16 → Q32.32 → старшие 32 бита
+                duty_offset <= mult_temp[47:16];
+                duty_cycle  <= DUTY_MIN + duty_offset[9:0];
             end
         end
     end
