@@ -1,8 +1,9 @@
-// pwm_module.v — ИСПРАВЛЕНО
+// pwm_module.v — трёхфазный ШИМ с синхронным обновлением скважности
+// ИСПРАВЛЕНО: теневые регистры для одновременного обновления всех фаз
 module pwm_module (
-    input  wire         pwm_clk,    // 200 МГц
+    input  wire         pwm_clk,
     input  wire         rst_n,
-    input  wire [9:0]   duty_a,     // 0–799 (10 бит)
+    input  wire [9:0]   duty_a,
     input  wire [9:0]   duty_b,
     input  wire [9:0]   duty_c,
     output reg          pwm_a,
@@ -12,17 +13,37 @@ module pwm_module (
     reg [9:0] counter;
     parameter MAX_CNT = 10'd799;
 
+    // Теневые регистры — обновляются только в начале периода
+    reg [9:0] duty_a_shadow;
+    reg [9:0] duty_b_shadow;
+    reg [9:0] duty_c_shadow;
+
     always @(posedge pwm_clk or negedge rst_n) begin
         if (!rst_n) begin
-            counter <= 10'd0;
-            pwm_a   <= 1'b0;
-            pwm_b   <= 1'b0;
-            pwm_c   <= 1'b0;
+            counter        <= 10'd0;
+            duty_a_shadow  <= 10'd0;
+            duty_b_shadow  <= 10'd0;
+            duty_c_shadow  <= 10'd0;
+            pwm_a          <= 1'b0;
+            pwm_b          <= 1'b0;
+            pwm_c          <= 1'b0;
         end else begin
-            counter <= (counter == MAX_CNT) ? 10'd0 : counter + 10'd1;
-            pwm_a   <= (counter < duty_a);
-            pwm_b   <= (counter < duty_b);
-            pwm_c   <= (counter < duty_c);
+            // Счётчик периодов
+            if (counter == MAX_CNT) begin
+                counter <= 10'd0;
+
+                // Защёлкиваем новые значения скважности на начало периода
+                duty_a_shadow <= duty_a;
+                duty_b_shadow <= duty_b;
+                duty_c_shadow <= duty_c;
+            end else begin
+                counter <= counter + 10'd1;
+            end
+
+            // Компараторы используют теневые регистры
+            pwm_a <= (counter < duty_a_shadow);
+            pwm_b <= (counter < duty_b_shadow);
+            pwm_c <= (counter < duty_c_shadow);
         end
     end
 endmodule
