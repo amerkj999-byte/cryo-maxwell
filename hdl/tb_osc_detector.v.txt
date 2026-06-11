@@ -1,10 +1,10 @@
 // tb_osc_detector.v
 `timescale 1ns/1ps
 module tb_osc_detector;
-    reg         clk;
-    reg         rst_n;
-    reg  [31:0] velocity;
-    wire        osc_detected;
+    reg               clk;
+    reg               rst_n;
+    reg signed [31:0] velocity;     // ИСПРАВЛЕНО: signed Q16.16
+    wire              osc_detected;
 
     osc_detector dut (
         .clk_4m(clk),
@@ -22,7 +22,7 @@ module tb_osc_detector;
 
         clk = 0;
         rst_n = 0;
-        velocity = 32'd0;
+        velocity = 32'sd0;
         #500 rst_n = 1;
 
         // Тест 1: нет осцилляций
@@ -30,16 +30,17 @@ module tb_osc_detector;
         $display("Test 1: osc_detected = %b (expected 0)", osc_detected);
 
         // Тест 2: осцилляции 200 Гц (4 перехода за 1 мс)
+        // +1 м/с в Q16.16 = 65536, -1 м/с = -65536
         repeat(5) begin
-            velocity = 32'h3F800000; #2500; // +1 м/с
-            velocity = 32'hBF800000; #2500; // -1 м/с
+            velocity = 32'sd65536;  #2500;  // +1 м/с
+            velocity = -32'sd65536; #2500;  // -1 м/с
         end
         #50000;
         $display("Test 2: osc_detected = %b (expected 1)", osc_detected);
 
         // Тест 3: одиночный переход (не осцилляция)
         #100000;
-        velocity = 32'hBF800000;
+        velocity = -32'sd65536;
         #50000;
         $display("Test 3: osc_detected = %b (expected 0)", osc_detected);
 
