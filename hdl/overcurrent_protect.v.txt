@@ -1,29 +1,37 @@
-// overcurrent_protect.v — ИСПРАВЛЕНО: добавлен асинхронный выход
+// overcurrent_protect.v — защита по току (signed, двунаправленная)
+// ИСПРАВЛЕНО:
+// 1. Порты signed
+// 2. Порог достижим в знаковом диапазоне
+// 3. Защита в обе стороны: > +I_MAX и < -I_MAX
 module overcurrent_protect (
-    input  wire         clk,
-    input  wire         rst_n,
-    input  wire [13:0]  current_a,
-    input  wire [13:0]  current_b,
-    input  wire [13:0]  current_c,
-    output reg          fault,
-    output reg          shutdown,
-    output wire         shutdown_async   // ДОБАВЛЕНО: комбинаторный
+    input  wire               clk,
+    input  wire               rst_n,
+    input  wire signed [13:0] current_a,
+    input  wire signed [13:0] current_b,
+    input  wire signed [13:0] current_c,
+    output reg                fault,
+    output reg                shutdown,
+    output wire               shutdown_async
 );
-    parameter I_MAX = 14'd15000;
+    // В знаковом 14-битном коде:
+    // Диапазон: -8192 ... +8191
+    // Порог 15 А в мА: зависит от калибровки датчика
+    // Допустим, 1 А = 400 отсчётов → 15 А = 6000
+    parameter signed [13:0] I_MAX = 14'sd6000; // калибруется под датчик
 
-    // Асинхронный компаратор — срабатывает мгновенно
-    assign shutdown_async = (current_a > I_MAX) ||
-                            (current_b > I_MAX) ||
-                            (current_c > I_MAX);
+    // Асинхронный компаратор — двунаправленный
+    assign shutdown_async = (current_a > I_MAX) || (current_a < -I_MAX) ||
+                            (current_b > I_MAX) || (current_b < -I_MAX) ||
+                            (current_c > I_MAX) || (current_c < -I_MAX);
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             fault    <= 1'b0;
             shutdown <= 1'b0;
         end else begin
-            fault    <= shutdown_async;
+            fault <= shutdown_async;
             if (shutdown_async)
-                shutdown <= 1'b1;
+                shutdown <= 1'b1;  // защёлка до сброса
         end
     end
 endmodule
