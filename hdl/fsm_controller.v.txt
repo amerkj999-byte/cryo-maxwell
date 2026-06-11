@@ -1,16 +1,16 @@
 // fsm_controller.v
 // FSM: Ожидание / Сжатие (КЗ) / ВМТ / Отбой (Рекуперация) / Виртуальный резистор
 module fsm_controller (
-    input  wire         clk,
-    input  wire         rst_n,
-    input  wire [31:0]  velocity,
-    input  wire [31:0]  position,
-    input  wire [13:0]  current,
-    input  wire         osc_detected,
-    output reg  [2:0]   mode,       // 0-ожидание, 1-КЗ, 2-ВМТ, 3-рекуп, 4-VR
-    output reg          brake_en,
-    output reg          rect_en,
-    output reg          vr_en
+    input  wire               clk,
+    input  wire               rst_n,
+    input  wire signed [31:0] velocity,    // ИСПРАВЛЕНО: signed Q16.16
+    input  wire signed [31:0] position,    // ИСПРАВЛЕНО: signed Q16.16
+    input  wire        [13:0] current,
+    input  wire               osc_detected,
+    output reg  [2:0]         mode,
+    output reg                brake_en,
+    output reg                rect_en,
+    output reg                vr_en
 );
     parameter MODE_IDLE     = 3'd0;
     parameter MODE_SHORT    = 3'd1;
@@ -18,10 +18,14 @@ module fsm_controller (
     parameter MODE_RECTIFY  = 3'd3;
     parameter MODE_VR       = 3'd4;
 
-    // Пороги скорости в Q16.16 (ИСПРАВЛЕНО)
-    parameter V_THRESH_UP   = 32'h00008000; // 0.5 м/с в Q16.16 = 32768
-    parameter V_THRESH_DOWN = 32'h00004CCD; // 0.3 м/с в Q16.16 = 19661
-    parameter TDC_POS       = 32'd80000;    // 80 мм (ВМТ)
+    // Пороги скорости в Q16.16 (знаковые)
+    parameter signed [31:0] V_THRESH_UP   = 32'sh00008000;  // +0.5 м/с
+    parameter signed [31:0] V_THRESH_DOWN = 32'sh00004CCD;  // +0.3 м/с (для модуля)
+    parameter signed [31:0] TDC_POS       = 32'sd80000;     // 80 мм
+
+    // Внутренние сигналы — знаковые
+    wire signed [31:0] vel_abs;
+    assign vel_abs = (velocity[31]) ? -velocity : velocity;
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -30,7 +34,6 @@ module fsm_controller (
             rect_en  <= 1'b0;
             vr_en    <= 1'b0;
         end else begin
-            // Приоритет: осцилляции → VR
             if (osc_detected) begin
                 mode     <= MODE_VR;
                 brake_en <= 1'b0;
@@ -42,10 +45,12 @@ module fsm_controller (
                         brake_en <= 1'b0;
                         rect_en  <= 1'b0;
                         vr_en    <= 1'b0;
-                        if (velocity > V_THRESH_UP && velocity[31] == 1'b0)
-                            mode <= MODE_SHORT; // движение вверх
+                        // Движение вверх: velocity положительная и больше порога
+                        if (velocity > V_THRESH_UP)
+                            mode <= MODE_SHORT;
+                        // Движение вниз: модуль скорости больше порога
                         else if (velocity < -V_THRESH_DOWN)
-                            mode <= MODE_RECTIFY; // движение вниз
+                            mode <= MODE_RECTIFY;
                     end
 
                     MODE_SHORT: begin
@@ -68,7 +73,7 @@ module fsm_controller (
                         brake_en <= 1'b0;
                         rect_en  <= 1'b1;
                         vr_en    <= 1'b0;
-                        if (velocity == 32'd0)
+                        if (velocity == 32'sd0)
                             mode <= MODE_IDLE;
                     end
 
@@ -76,7 +81,7 @@ module fsm_controller (
                         brake_en <= 1'b0;
                         rect_en  <= 1'b0;
                         vr_en    <= 1'b1;
-                        if (!osc_detected && velocity == 32'd0)
+                        if (!osc_detected && velocity == 32'sd0)
                             mode <= MODE_IDLE;
                     end
                 endcase
