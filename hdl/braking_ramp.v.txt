@@ -1,48 +1,57 @@
 // braking_ramp.v — синтезируемая версия (fixed-point, без деления)
+// ИСПРАВЛЕНО: масштабирование mult_temp[47:32] вместо [47:16]
 module braking_ramp (
     input  wire               clk,
     input  wire               rst_n,
     input  wire signed [31:0] velocity,    // Q16.16
     output reg  [9:0]         duty_cycle   // 0–799
 );
-    // Пороги скорости в Q16.16
-    parameter signed [31:0] V_MAX    = 32'sh00008000; // +0.5 м/с
+    parameter signed [31:0] V_MAX    = 32'sh00008000; // +0.5 м/с (32768)
     parameter signed [31:0] V_MIN    = 32'sh00003333; // +0.2 м/с (13107)
     parameter DUTY_MAX = 10'd799;
     parameter DUTY_MIN = 10'd160;
 
     // K = (DUTY_MAX - DUTY_MIN) / (V_MAX - V_MIN) в Q16.16
     // K = 639 / 19661 * 65536 ≈ 2130
-    parameter signed [31:0] K = 32'sh00000852; // 2130 в Q16.16
+    parameter signed [31:0] K = 32'sh00000852; // 2130
 
     wire signed [31:0] v_abs;
     assign v_abs = (velocity[31]) ? -velocity : velocity;
 
-    reg signed [31:0] delta_v;    // v_abs - V_MIN
-    reg signed [63:0] mult_temp;  // delta_v * K (64 бита)
-    reg signed [31:0] duty_offset; // результат умножения в Q16.16
+    // Конвейер: Stage 0
+    reg signed [31:0] delta_v;      // v_abs - V_MIN (Q16.16)
 
-    // Конвейер: Step 1 — вычитание и умножение
+    // Конвейер: Stage 1
+    reg signed [63:0] mult_temp;    // delta_v * K (Q32.32 после умножения)
+    reg signed [15:0] duty_offset;  // целая часть результата (16 бит)
+
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             delta_v     <= 32'sd0;
             mult_temp   <= 64'sd0;
-            duty_offset <= 32'sd0;
+            duty_offset <= 16'sd0;
             duty_cycle  <= DUTY_MAX;
         end else begin
-            // Step 1: вычисляем delta_v и умножаем на K
             if (v_abs > V_MAX) begin
                 duty_cycle <= DUTY_MAX;
+                delta_v    <= 32'sd0;
+                mult_temp  <= 64'sd0;
             end else if (v_abs < V_MIN) begin
                 duty_cycle <= DUTY_MIN;
+                delta_v    <= 32'sd0;
+                mult_temp  <= 64'sd0;
             end else begin
+                // Stage 0: вычитание
                 delta_v   <= v_abs - V_MIN;
-                mult_temp <= delta_v * K;
 
-                // Step 2: извлекаем целую часть и добавляем DUTY_MIN
-                // mult_temp[47:16] — целая часть результата Q16.16 * Q16.16 → Q32.32 → старшие 32 бита
-                duty_offset <= mult_temp[47:16];
-                duty_cycle  <= DUTY_MIN + duty_offset[9:0];
+                // Stage 1: умножение и извлечение целой части
+                // Q16.16 * Q16.16 = Q32.32
+                // Целая часть в битах [47:32]
+                mult_temp   <= delta_v * K;
+                duty_offset <= mult_temp[47:32];  // ИСПРАВЛЕНО
+
+                // Stage 2: финальная сумма
+                duty_cycle <= DUTY_MIN + duty_offset[9:0];
             end
         end
     end
