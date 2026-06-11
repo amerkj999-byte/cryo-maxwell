@@ -1,24 +1,20 @@
 // adc_interface.v
 // Интерфейс AD9248 (14 бит, 65 MSPS, LVDS)
-// ИСПРАВЛЕНО: преобразование Offset Binary → 2's complement (signed)
+// ИСПРАВЛЕНО:
+// 1. Преобразование Offset Binary → 2's complement
+// 2. Синхронная запись в каналы без промежуточного регистра
 module adc_interface (
     input  wire               clk_200m,
     input  wire               rst_n,
     input  wire               adc_clk_p,
     input  wire        [13:0] adc_data_p,
-    output reg  signed [13:0] current_a,   // ИСПРАВЛЕНО: signed
+    output reg  signed [13:0] current_a,
     output reg  signed [13:0] current_b,
     output reg  signed [13:0] current_c
 );
-    // AD9248 по умолчанию выдаёт Offset Binary:
-    // 0x0000 = минимальный отрицательный ток
-    // 0x2000 = нулевой ток
-    // 0x3FFF = максимальный положительный ток
-
-    parameter OFFSET = 14'sd8192; // 0x2000 — середина шкалы
+    parameter signed [13:0] OFFSET = 14'sd8192; // 0x2000
 
     reg [1:0] channel_sel;
-    reg signed [13:0] adc_signed; // преобразованное знаковое значение
 
     always @(posedge adc_clk_p or negedge rst_n) begin
         if (!rst_n) begin
@@ -26,16 +22,14 @@ module adc_interface (
             current_a   <= 14'sd0;
             current_b   <= 14'sd0;
             current_c   <= 14'sd0;
-            adc_signed  <= 14'sd0;
         end else begin
             // Преобразование Offset Binary → знаковый код
-            // adc_data_p — беззнаковый вход, преобразуем через вычитание
-            adc_signed <= $signed(adc_data_p) - OFFSET;
-
+            // и запись в нужный канал в одном такте
             case (channel_sel)
-                2'd0: current_a <= adc_signed;
-                2'd1: current_b <= adc_signed;
-                2'd2: current_c <= adc_signed;
+                2'd0: current_a <= $signed(adc_data_p) - OFFSET;
+                2'd1: current_b <= $signed(adc_data_p) - OFFSET;
+                2'd2: current_c <= $signed(adc_data_p) - OFFSET;
+                default: ;
             endcase
 
             channel_sel <= (channel_sel == 2'd2) ? 2'd0 : channel_sel + 2'd1;
