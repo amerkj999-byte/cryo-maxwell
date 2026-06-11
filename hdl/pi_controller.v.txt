@@ -1,23 +1,23 @@
-// pi_controller.v — ИСПРАВЛЕНО (защита от усечения)
+// pi_controller.v — ИСПРАВЛЕНО (signed + антиусечение)
 module pi_controller (
-    input  wire         clk,
-    input  wire         rst_n,
-    input  wire [13:0]  current_in,
-    input  wire [13:0]  target_current,
-    output reg  [9:0]   pwm_duty       // 10 бит (0–799)
+    input  wire               clk,
+    input  wire               rst_n,
+    input  wire signed [13:0] current_in,      // ИСПРАВЛЕНО: signed
+    input  wire signed [13:0] target_current,  // ИСПРАВЛЕНО: signed
+    output reg  [9:0]         pwm_duty
 );
-    parameter Kp = 8'h20;
-    parameter Ki = 8'h04;
+    parameter signed [7:0] Kp = 8'sh20;  // ИСПРАВЛЕНО: signed
+    parameter signed [7:0] Ki = 8'sh04;  // ИСПРАВЛЕНО: signed
 
-    reg [31:0] integral;
-    reg [31:0] error;
-    reg [31:0] pwm_tmp;    // ДОБАВЛЕНО: временный регистр
+    reg signed [31:0] integral;
+    reg signed [31:0] error;
+    reg signed [31:0] pwm_tmp;
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            integral <= 32'd0;
+            integral <= 32'sd0;
             pwm_duty <= 10'd0;
-            pwm_tmp  <= 32'd0;       // ДОБАВЛЕНО
+            pwm_tmp  <= 32'sd0;
         end else begin
             error = target_current - current_in;
 
@@ -25,14 +25,14 @@ module pi_controller (
             if (pwm_duty < 10'd799 && pwm_duty > 10'd0)
                 integral <= integral + Ki * error;
 
-            // Считаем во временный регистр
             pwm_tmp <= Kp * error + integral;
 
-            // Ограничение на 32-битном уровне
-            if (pwm_tmp > 32'd799)
-                pwm_tmp <= 32'd799;
+            // Ограничение на 32-битном знаковом уровне
+            if (pwm_tmp > 32'sd799)
+                pwm_tmp <= 32'sd799;
+            else if (pwm_tmp < 32'sd0)
+                pwm_tmp <= 32'sd0;
 
-            // Присваиваем младшие 10 бит
             pwm_duty <= pwm_tmp[9:0];
         end
     end
