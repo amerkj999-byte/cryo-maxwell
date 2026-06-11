@@ -1,5 +1,5 @@
 // top.v — Cryo-Maxwell V3.0 Active Damper Controller
-// Исправления:
+// Финальная версия со всеми исправлениями:
 // 1. signed-порты для Q16.16 (fsm_controller, osc_detector_ce, pi_controller)
 // 2. LVDS-буферы для АЦП (adc_clk_n, adc_data_n)
 // 3. Асинхронное гашение ключей через shutdown_async
@@ -7,11 +7,13 @@
 // 5. Убран clk_divider
 // 6. heartbeat_led на счётчике
 // 7. Три независимых ПИ-регулятора (фазы A, B, C)
-// 8. Три раздельных канала ШИМ (pwm_muxed_a/b/c)
+// 8. Три раздельных канала ШИМ (pwm_muxed_a/b/c) с синхронным обновлением
 // 9. Имя модуля фильтра: kalman_filter_fixed
+// 10. SPI: spi_miso проброшен в can_interface, подтяжка PULLUP
+// 11. ШИМ-мультиплексор тактированный (убираем комбинаторный skew)
 module top (
     // Системные
-    input  wire         clk_200m_p,   // 200 МГц дифференциальный
+    input  wire         clk_200m_p,
     input  wire         clk_200m_n,
     input  wire         rst_n,
 
@@ -38,7 +40,7 @@ module top (
     output wire         spi_cs,
     output wire         spi_clk,
     output wire         spi_mosi,
-    input  wire         spi_miso,
+    (* PULLTYPE = "PULLUP" *) input wire spi_miso,  // внутренняя подтяжка
     output wire         fault_led,
     output wire         heartbeat_led
 );
@@ -79,14 +81,12 @@ module top (
     // =================================================================
     // Дифференциальные буферы АЦП
     // =================================================================
-    // Такт АЦП
     IBUFGDS #(.DIFF_TERM("TRUE")) adc_clk_buf (
         .I(adc_clk_p),
         .IB(adc_clk_n),
         .O(adc_clk_se)
     );
 
-    // Данные АЦП (14 бит)
     genvar i;
     generate
         for (i = 0; i < 14; i = i + 1) begin : adc_data_buf
@@ -99,7 +99,7 @@ module top (
     endgenerate
 
     // =================================================================
-    // Декодер интерферометра
+    // Декодер интерферометра (сброс позиции по фронту Z)
     // =================================================================
     interferometer_decoder u_inter (
         .clk(clk_200m),
@@ -112,7 +112,7 @@ module top (
     );
 
     // =================================================================
-    // Альфа-Бета фильтр (конвейерный, Q16.16)
+    // Альфа-Бета фильтр (4-ступенчатый конвейер, Q16.16)
     // =================================================================
     kalman_filter_fixed u_kalman (
         .clk(clk_200m),
@@ -123,7 +123,7 @@ module top (
     );
 
     // =================================================================
-    // Интерфейс АЦП (после преобразования LVDS → single-ended)
+    // Интерфейс АЦП (Offset Binary → signed, без промежуточного регистра)
     // =================================================================
     adc_interface u_adc (
         .clk_200m(clk_200m),
@@ -136,7 +136,7 @@ module top (
     );
 
     // =================================================================
-    // Детектор осцилляций (Clock Enable, без Gated Clock)
+    // Детектор осцилляций (Clock Enable, гистерезис на velocity_prev)
     // =================================================================
     osc_detector_ce u_osc (
         .clk_200m(clk_200m),
@@ -146,7 +146,7 @@ module top (
     );
 
     // =================================================================
-    // Генератор рампы торможения
+    // Генератор рампы торможения (конвейер с флагом диапазона)
     // =================================================================
     braking_ramp u_braking (
         .clk(clk_200m),
@@ -156,7 +156,7 @@ module top (
     );
 
     // =================================================================
-    // Конечный автомат (симметричная логика сжатия/отбоя)
+    // Конечный автомат (симметричная логика, выход из MODE_SHORT по отбою)
     // =================================================================
     fsm_controller u_fsm (
         .clk(clk_200m),
@@ -172,7 +172,7 @@ module top (
     );
 
     // =================================================================
-    // PI-регуляторы — по одному на каждую фазу
+    // PI-регуляторы — по одному на каждую фазу (4-ступенчатый конвейер)
     // =================================================================
     pi_controller u_pi_a (
         .clk(clk_200m),
@@ -199,36 +199,42 @@ module top (
     );
 
     // =================================================================
-    // Мультиплексор ШИМ (braking ramp / PI×3 / 0)
+    // Мультиплексор ШИМ — тактированный (убирает комбинаторный skew)
     // =================================================================
     reg [9:0] pwm_muxed_a, pwm_muxed_b, pwm_muxed_c;
 
-    always @(*) begin
-        if (shutdown) begin
-            pwm_muxed_a = 10'd0;
-            pwm_muxed_b = 10'd0;
-            pwm_muxed_c = 10'd0;
-        end else if (brake_en) begin
-            pwm_muxed_a = duty_cycle;
-            pwm_muxed_b = duty_cycle;
-            pwm_muxed_c = duty_cycle;
-        end else if (vr_en) begin
-            pwm_muxed_a = pwm_duty_a;
-            pwm_muxed_b = pwm_duty_b;
-            pwm_muxed_c = pwm_duty_c;
-        end else if (rect_en) begin
-            pwm_muxed_a = 10'd0;
-            pwm_muxed_b = 10'd0;
-            pwm_muxed_c = 10'd0;
+    always @(posedge clk_200m or negedge rst_n) begin
+        if (!rst_n) begin
+            pwm_muxed_a <= 10'd0;
+            pwm_muxed_b <= 10'd0;
+            pwm_muxed_c <= 10'd0;
         end else begin
-            pwm_muxed_a = 10'd0;
-            pwm_muxed_b = 10'd0;
-            pwm_muxed_c = 10'd0;
+            if (shutdown) begin
+                pwm_muxed_a <= 10'd0;
+                pwm_muxed_b <= 10'd0;
+                pwm_muxed_c <= 10'd0;
+            end else if (brake_en) begin
+                pwm_muxed_a <= duty_cycle;
+                pwm_muxed_b <= duty_cycle;
+                pwm_muxed_c <= duty_cycle;
+            end else if (vr_en) begin
+                pwm_muxed_a <= pwm_duty_a;
+                pwm_muxed_b <= pwm_duty_b;
+                pwm_muxed_c <= pwm_duty_c;
+            end else if (rect_en) begin
+                pwm_muxed_a <= 10'd0;
+                pwm_muxed_b <= 10'd0;
+                pwm_muxed_c <= 10'd0;
+            end else begin
+                pwm_muxed_a <= 10'd0;
+                pwm_muxed_b <= 10'd0;
+                pwm_muxed_c <= 10'd0;
+            end
         end
     end
 
     // =================================================================
-    // ШИМ-генератор (три независимых канала)
+    // ШИМ-генератор (три канала, синхронное обновление по началу периода)
     // =================================================================
     pwm_module u_pwm (
         .pwm_clk(clk_200m),
@@ -242,7 +248,7 @@ module top (
     );
 
     // =================================================================
-    // Мёртвое время + асинхронное гашение (shutdown_async)
+    // Мёртвое время + асинхронное гашение
     // =================================================================
     deadtime_generator u_dt_a (
         .clk_200m(clk_200m),
@@ -272,7 +278,7 @@ module top (
     );
 
     // =================================================================
-    // Защита по току (с асинхронным выходом)
+    // Защита по току (signed, двунаправленная)
     // =================================================================
     overcurrent_protect u_protect (
         .clk(clk_200m),
@@ -286,7 +292,7 @@ module top (
     );
 
     // =================================================================
-    // CAN/SPI интерфейс
+    // CAN/SPI интерфейс (spi_miso проброшен)
     // =================================================================
     can_interface u_can (
         .clk(clk_200m),
@@ -297,6 +303,7 @@ module top (
         .current_b(current_b),
         .current_c(current_c),
         .mode(mode),
+        .spi_miso(spi_miso),
         .spi_cs(spi_cs),
         .spi_clk(spi_clk),
         .spi_mosi(spi_mosi)
