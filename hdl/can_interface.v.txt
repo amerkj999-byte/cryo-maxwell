@@ -11,6 +11,7 @@ module can_interface (
     input  wire        [13:0] current_b,
     input  wire        [13:0] current_c,
     input  wire        [2:0]  mode,
+    input  wire               spi_miso,
     output wire               spi_cs,
     output wire               spi_clk,
     output wire        [7:0]  spi_mosi
@@ -91,6 +92,7 @@ module can_interface (
         .tx_data(tx_data),
         .tx_valid(tx_valid),
         .tx_ready(tx_ready),
+        .spi_miso(spi_miso),
         .spi_cs(spi_cs),
         .spi_clk(spi_clk),
         .spi_mosi(spi_mosi)
