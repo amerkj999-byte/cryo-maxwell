@@ -1,49 +1,80 @@
-// tb_osc_detector.v
+// tb_osc_detector.v — тестбенч для osc_detector_ce
 `timescale 1ns/1ps
 module tb_osc_detector;
-    reg               clk;
+    reg               clk_200m;
     reg               rst_n;
-    reg signed [31:0] velocity;     // ИСПРАВЛЕНО: signed Q16.16
+    reg signed [31:0] velocity;
     wire              osc_detected;
 
-    osc_detector dut (
-        .clk_4m(clk),
+    // Инстанцируем новый модуль с Clock Enable
+    osc_detector_ce dut (
+        .clk_200m(clk_200m),
         .rst_n(rst_n),
         .velocity(velocity),
         .osc_detected(osc_detected)
     );
 
-    // Такт 4 МГц (период 250 нс)
-    always #125 clk = ~clk;
+    // Системный такт 200 МГц (период 5 нс)
+    always #2.5 clk_200m = ~clk_200m;
 
     initial begin
         $dumpfile("tb_osc_detector.vcd");
         $dumpvars(0, tb_osc_detector);
 
-        clk = 0;
+        clk_200m = 0;
         rst_n = 0;
         velocity = 32'sd0;
-        #500 rst_n = 1;
+        #50 rst_n = 1;
 
-        // Тест 1: нет осцилляций
-        #100000;
-        $display("Test 1: osc_detected = %b (expected 0)", osc_detected);
+        // Ждём инициализации (несколько периодов CE)
+        #10000;
 
+        // =============================================
+        // Тест 1: нет осцилляций — скорость постоянна
+        // =============================================
+        velocity = 32'sd65536;  // +1 м/с в Q16.16
+        #200000;  // 200 мкс = 8000 тактов CE
+        $display("Test 1 (no oscillation): osc_detected = %b (expected 0)", osc_detected);
+
+        // =============================================
         // Тест 2: осцилляции 200 Гц (4 перехода за 1 мс)
-        // +1 м/с в Q16.16 = 65536, -1 м/с = -65536
-        repeat(5) begin
-            velocity = 32'sd65536;  #2500;  // +1 м/с
-            velocity = -32'sd65536; #2500;  // -1 м/с
+        // Период 200 Гц = 5 мс = 5000 нс
+        // Полупериод = 2.5 мс = 2 500 000 нс
+        // =============================================
+        repeat(6) begin
+            velocity =  32'sd65536;  // +1 м/с
+            #2500000;                // 2.5 мс
+            velocity = -32'sd65536;  // -1 м/с
+            #2500000;                // 2.5 мс
         end
-        #50000;
-        $display("Test 2: osc_detected = %b (expected 1)", osc_detected);
+        // Ждём закрытия окна
+        #200000;
+        $display("Test 2 (200 Hz oscillation): osc_detected = %b (expected 1)", osc_detected);
 
+        // =============================================
         // Тест 3: одиночный переход (не осцилляция)
-        #100000;
+        // =============================================
+        // Ждём сброса детектора
+        #200000;
         velocity = -32'sd65536;
-        #50000;
-        $display("Test 3: osc_detected = %b (expected 0)", osc_detected);
+        #200000;
+        $display("Test 3 (single transition): osc_detected = %b (expected 0)", osc_detected);
 
-        #10000 $finish;
+        // =============================================
+        // Тест 4: гистерезис — малая амплитуда не считается
+        // =============================================
+        #200000;
+        // VEL_HYST = 0.05 м/с = 3277 в Q16.16
+        // Подаём колебания ±0.03 м/с = ±1966 (ниже порога)
+        repeat(10) begin
+            velocity =  32'sd1966;
+            #250000;
+            velocity = -32'sd1966;
+            #250000;
+        end
+        #200000;
+        $display("Test 4 (below hysteresis): osc_detected = %b (expected 0)", osc_detected);
+
+        #50000 $finish;
     end
 endmodule
