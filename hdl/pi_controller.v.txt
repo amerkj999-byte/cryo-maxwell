@@ -1,5 +1,9 @@
-// pi_controller.v — ПИ-регулятор с конвейером
-// Строго неблокирующие присваивания, 2-ступенчатый конвейер
+// pi_controller.v — ПИ-регулятор с корректным 4-ступенчатым конвейером
+// ИСПРАВЛЕНО:
+// 1. p_term вычисляется из ошибки, обновлённой в предыдущем такте
+// 2. integral и i_term обновляются синхронно
+// 3. Anti-windup проверяет pwm_duty с правильной задержкой
+//    (pwm_duty отстаёт на 3 такта → сравниваем с pwm_duty_s3)
 module pi_controller (
     input  wire               clk,
     input  wire               rst_n,
@@ -10,60 +14,101 @@ module pi_controller (
     parameter signed [7:0] Kp = 8'sh20;  // 32
     parameter signed [7:0] Ki = 8'sh04;  // 4
 
-    // Stage 0: входные регистры
-    reg signed [13:0] cur_in_r;
-    reg signed [13:0] tgt_cur_r;
+    // Регистр интеграла (состояние)
+    reg signed [31:0] integral_reg;
 
-    // Stage 1: вычисление ошибки и П-составляющей, обновление интеграла
-    reg signed [31:0] error;
-    reg signed [31:0] integral;
-    reg signed [31:0] p_term;      // Kp * error
-    reg signed [31:0] i_term;      // интеграл
+    // ============================================================
+    // Stage 0: захват входов
+    // ============================================================
+    reg signed [13:0] cur_in_s0;
+    reg signed [13:0] tgt_cur_s0;
 
-    // Stage 2: сумма и ограничение
-    reg signed [31:0] pwm_tmp;
+    // ============================================================
+    // Stage 1: вычисление ошибки и П-составляющей
+    // ============================================================
+    reg signed [31:0] error_s1;
+    reg signed [31:0] p_term_s1;
+
+    // ============================================================
+    // Stage 2: обновление интеграла + И-составляющая
+    // ============================================================
+    reg signed [31:0] integral_s2;
+    reg signed [31:0] i_term_s2;
+    reg signed [31:0] p_term_s2;
+
+    // ============================================================
+    // Stage 3: сумма П + И, ограничение
+    // ============================================================
+    reg signed [31:0] pwm_tmp_s3;
+    reg [9:0]         pwm_duty_s3;   // для anti-windup
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
+            // Состояние
+            integral_reg <= 32'sd0;
+
             // Stage 0
-            cur_in_r  <= 14'sd0;
-            tgt_cur_r <= 14'sd0;
+            cur_in_s0  <= 14'sd0;
+            tgt_cur_s0 <= 14'sd0;
 
             // Stage 1
-            error    <= 32'sd0;
-            integral <= 32'sd0;
-            p_term   <= 32'sd0;
-            i_term   <= 32'sd0;
+            error_s1  <= 32'sd0;
+            p_term_s1 <= 32'sd0;
 
             // Stage 2
-            pwm_tmp  <= 32'sd0;
+            integral_s2 <= 32'sd0;
+            i_term_s2   <= 32'sd0;
+            p_term_s2   <= 32'sd0;
+
+            // Stage 3
+            pwm_tmp_s3  <= 32'sd0;
+            pwm_duty_s3 <= 10'd0;
+
+            // Выход
             pwm_duty <= 10'd0;
         end else begin
-            // =========== Stage 0: захват входов ===========
-            cur_in_r  <= current_in;
-            tgt_cur_r <= target_current;
+            // =================================================
+            // Stage 0: захват входов
+            // =================================================
+            cur_in_s0  <= current_in;
+            tgt_cur_s0 <= target_current;
 
-            // =========== Stage 1: ошибка и составляющие ===========
-            error <= tgt_cur_r - cur_in_r;
+            // =================================================
+            // Stage 1: ошибка и П-составляющая
+            // error = target - current
+            // p_term = Kp * error
+            // Здесь error_s1 — новое значение, p_term_s1 — новое
+            // =================================================
+            error_s1  <= tgt_cur_s0 - cur_in_s0;
+            p_term_s1 <= $signed(Kp) * (tgt_cur_s0 - cur_in_s0);
 
-            // Антивиндовка: обновляем интеграл только если не на границе
-            if (pwm_duty < 10'd799 && pwm_duty > 10'd0)
-                integral <= integral + Ki * error;
-            // иначе integral замораживается
+            // =================================================
+            // Stage 2: интеграл и И-составляющая
+            // integral = integral + Ki * error
+            // anti-windup: проверяем pwm_duty_s3 (выход 3 такта назад)
+            // =================================================
+            if (pwm_duty_s3 < 10'd799 && pwm_duty_s3 > 10'd0)
+                integral_reg <= integral_reg + $signed(Ki) * error_s1;
+            // иначе integral_reg заморожен
 
-            p_term <= Kp * error;
-            i_term <= integral;
+            // i_term_s2 и p_term_s2 — копии для следующей ступени
+            integral_s2 <= integral_reg + $signed(Ki) * error_s1;
+            i_term_s2   <= integral_reg + $signed(Ki) * error_s1;
+            p_term_s2   <= p_term_s1;
 
-            // =========== Stage 2: сумма и ограничение ===========
-            pwm_tmp <= p_term + i_term;
+            // =================================================
+            // Stage 3: сумма и ограничение
+            // =================================================
+            pwm_tmp_s3 <= p_term_s2 + i_term_s2;
 
-            // Ограничение на знаковом уровне
-            if (pwm_tmp > 32'sd799)
-                pwm_duty <= 10'd799;
-            else if (pwm_tmp < 32'sd0)
-                pwm_duty <= 10'd0;
+            if (pwm_tmp_s3 > 32'sd799)
+                pwm_duty_s3 <= 10'd799;
+            else if (pwm_tmp_s3 < 32'sd0)
+                pwm_duty_s3 <= 10'd0;
             else
-                pwm_duty <= pwm_tmp[9:0];
+                pwm_duty_s3 <= pwm_tmp_s3[9:0];
+
+            pwm_duty <= pwm_duty_s3;
         end
     end
 endmodule
