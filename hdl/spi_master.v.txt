@@ -1,6 +1,9 @@
 // spi_master.v
 // Простой SPI мастер для связи с ARM (STM32H743)
-// Режим 0: CPOL=0 (clk idle low), CPHA=0 (выборка по переднему фронту)
+// Режим 0: CPOL=0, CPHA=0
+// ИСПРАВЛЕНО:
+// 1. Честный делитель на 4 (clk_div_counter)
+// 2. Первый бит MOSI выставляется в IDLE одновременно с CS=0
 module spi_master (
     input  wire         clk,
     input  wire         rst_n,
@@ -14,15 +17,14 @@ module spi_master (
     output reg  [7:0]   rx_data,
     output reg          rx_valid
 );
-    // Состояния
-    parameter IDLE       = 2'd0;
-    parameter TRANSFER   = 2'd1;
+    parameter IDLE     = 2'd0;
+    parameter TRANSFER = 2'd1;
 
     reg [1:0] state;
     reg [3:0] bit_cnt;
     reg [7:0] shift_reg_tx;
     reg [7:0] shift_reg_rx;
-    reg [1:0] clk_div_counter;  // ДОБАВЛЕНО: счётчик для делителя на 4
+    reg [1:0] clk_div_counter;
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -36,55 +38,59 @@ module spi_master (
             rx_data         <= 8'd0;
             shift_reg_tx    <= 8'd0;
             shift_reg_rx    <= 8'd0;
-            clk_div_counter <= 2'd0;  // ДОБАВЛЕНО
+            clk_div_counter <= 2'd0;
         end else begin
-            rx_valid <= 1'b0; // импульс на 1 такт
+            rx_valid <= 1'b0;
 
             case (state)
                 IDLE: begin
                     spi_cs   <= 1'b1;
                     spi_clk  <= 1'b0;
                     tx_ready <= 1'b1;
-                    clk_div_counter <= 2'd0;  // ДОБАВЛЕНО
+                    clk_div_counter <= 2'd0;
 
                     if (tx_valid && tx_ready) begin
-                        shift_reg_tx <= tx_data;
-                        shift_reg_rx <= 8'd0;
-                        bit_cnt      <= 4'd8;
-                        spi_cs       <= 1'b0;
-                        tx_ready     <= 1'b0;
-                        state        <= TRANSFER;
+                        shift_reg_tx    <= {tx_data[6:0], 1'b0}; // сдвинуто: бит 7 уйдёт на MOSI сейчас
+                        shift_reg_rx    <= 8'd0;
+                        bit_cnt         <= 4'd7;                  // осталось 7 бит (бит 7 уже на линии)
+                        spi_mosi        <= tx_data[7];            // первый бит — СРАЗУ
+                        spi_cs          <= 1'b0;
+                        tx_ready        <= 1'b0;
+                        state           <= TRANSFER;
+                    end else begin
+                        spi_mosi <= 1'b0;  // в idle держим 0
                     end
                 end
 
                 TRANSFER: begin
-                    // Честный делитель на 4: счётчик 0→1→2→3→0
                     clk_div_counter <= clk_div_counter + 2'd1;
 
-                    // Переключение SPI_CLK на значениях счётчика 1 и 3
-                    // При clk=200 МГц это даст 50 МГц на SCK
+                    // Переключение SPI_CLK: 1 на счёте 1, 0 на счёте 3
                     if (clk_div_counter == 2'd1)
                         spi_clk <= 1'b1;
                     else if (clk_div_counter == 2'd3)
                         spi_clk <= 1'b0;
 
-                    // Выставляем MOSI на спадающем фронте SPI_CLK (счётчик == 3)
+                    // Выставляем следующий бит на спадающем фронте (счёт == 3)
                     if (clk_div_counter == 2'd3) begin
-                        spi_mosi     <= shift_reg_tx[7];
-                        shift_reg_tx <= {shift_reg_tx[6:0], 1'b0};
-                        bit_cnt      <= bit_cnt - 4'd1;
+                        if (bit_cnt > 0) begin
+                            spi_mosi     <= shift_reg_tx[7];
+                            shift_reg_tx <= {shift_reg_tx[6:0], 1'b0};
+                            bit_cnt      <= bit_cnt - 4'd1;
+                        end
                     end
 
-                    // Захватываем MISO на переднем фронте SPI_CLK (счётчик == 1)
+                    // Захватываем MISO на переднем фронте (счёт == 1)
                     if (clk_div_counter == 2'd1) begin
-                        shift_reg_rx <= {shift_reg_rx[6:0], spi_miso};
+                        if (bit_cnt > 0)
+                            shift_reg_rx <= {shift_reg_rx[6:0], spi_miso};
                     end
 
-                    // Завершение передачи: когда bit_cnt == 0 И мы на спадающем фронте
+                    // Завершение передачи
                     if (bit_cnt == 4'd0 && clk_div_counter == 2'd3) begin
                         spi_cs    <= 1'b1;
                         spi_clk   <= 1'b0;
-                        rx_data   <= shift_reg_rx;
+                        rx_data   <= {shift_reg_rx[6:0], spi_miso}; // захват последнего бита
                         rx_valid  <= 1'b1;
                         tx_ready  <= 1'b1;
                         state     <= IDLE;
