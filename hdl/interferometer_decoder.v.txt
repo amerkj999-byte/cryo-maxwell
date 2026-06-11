@@ -1,5 +1,8 @@
 // interferometer_decoder.v
 // Декодирование A/B/Z с лазерного интерферометра (1 мкм/тик)
+// ИСПРАВЛЕНО:
+// 1. Убран промежуточный флаг direction (гонка сигналов)
+// 2. Сброс позиции по фронту Z, а не по уровню (устранён «липкий ноль»)
 module interferometer_decoder (
     input  wire         clk,
     input  wire         rst_n,
@@ -14,6 +17,7 @@ module interferometer_decoder (
 
     // Синхронизация асинхронных входов
     reg [1:0] A_sync, B_sync, Z_sync;
+    reg       Z_prev;               // ДОБАВЛЕНО: предыдущее значение Z
 
     always @(posedge clk) begin
         A_sync <= {A_sync[0], A};
@@ -25,17 +29,22 @@ module interferometer_decoder (
     wire B_clean = B_sync[1];
     wire Z_clean = Z_sync[1];
 
+    // Детектор фронта Z: 0→1
+    wire Z_rising;
+    assign Z_rising = Z_clean && !Z_prev;
+
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             AB_prev     <= 2'b00;
+            Z_prev      <= 1'b0;        // ДОБАВЛЕНО
             position    <= 32'd0;
             index_pulse <= 1'b0;
         end else begin
             AB_sync <= {A_clean, B_clean};
             AB_prev <= AB_sync;
+            Z_prev  <= Z_clean;         // ДОБАВЛЕНО: запоминаем Z
 
-            // Декодирование Грея с немедленным инкрементом/декрементом
-            // ИСПРАВЛЕНО: убран промежуточный флаг direction
+            // Декодирование Грея — инкремент/декремент
             case ({AB_prev, AB_sync})
                 // Переходы +1
                 4'b0001: position <= position + 32'd1;
@@ -50,8 +59,10 @@ module interferometer_decoder (
                 default: position <= position;
             endcase
 
-            // Индексный импульс
-            if (Z_clean) begin
+            // Сброс позиции ТОЛЬКО по фронту Z (0→1)
+            // После сброса position продолжает считать шаги A/B,
+            // даже если Z_clean всё ещё = 1
+            if (Z_rising) begin
                 position    <= 32'd0;
                 index_pulse <= 1'b1;
             end else begin
