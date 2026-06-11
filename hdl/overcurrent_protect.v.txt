@@ -1,8 +1,8 @@
-// overcurrent_protect.v — защита по току (signed, двунаправленная)
+// overcurrent_protect.v — защита по току (полностью signed, двунаправленная)
 // ИСПРАВЛЕНО:
 // 1. Порты signed
-// 2. Порог достижим в знаковом диапазоне
-// 3. Защита в обе стороны: > +I_MAX и < -I_MAX
+// 2. Константа I_MAX — signed, в пределах 14-битного знакового диапазона
+// 3. Двунаправленная защита: > +I_MAX и < -I_MAX
 module overcurrent_protect (
     input  wire               clk,
     input  wire               rst_n,
@@ -13,13 +13,14 @@ module overcurrent_protect (
     output reg                shutdown,
     output wire               shutdown_async
 );
-    // В знаковом 14-битном коде:
-    // Диапазон: -8192 ... +8191
-    // Порог 15 А в мА: зависит от калибровки датчика
-    // Допустим, 1 А = 400 отсчётов → 15 А = 6000
-    parameter signed [13:0] I_MAX = 14'sd6000; // калибруется под датчик
+    // Знаковый порог: 15 А в отсчётах АЦП
+    // Калибруется под датчик тока и шунт
+    // Максимум знакового 14-бит: +8191
+    // Пример: 1 А = 400 отсчётов → 15 А = 6000
+    parameter signed [13:0] I_MAX = 14'sd6000;
 
-    // Асинхронный компаратор — двунаправленный
+    // Двунаправленный асинхронный компаратор
+    // Оба операнда signed — Verilog выполняет знаковое сравнение
     assign shutdown_async = (current_a > I_MAX) || (current_a < -I_MAX) ||
                             (current_b > I_MAX) || (current_b < -I_MAX) ||
                             (current_c > I_MAX) || (current_c < -I_MAX);
@@ -31,7 +32,7 @@ module overcurrent_protect (
         end else begin
             fault <= shutdown_async;
             if (shutdown_async)
-                shutdown <= 1'b1;  // защёлка до сброса
+                shutdown <= 1'b1;  // защёлка до аппаратного сброса
         end
     end
 endmodule
