@@ -1,19 +1,22 @@
-// osc_detector_ce.v — ИСПРАВЛЕНО: Clock Enable вместо Gated Clock
+// osc_detector_ce.v — Clock Enable вместо Gated Clock
+// Zero-Crossing детектор паразитных осцилляций
+// ИСПРАВЛЕНО:
+// 1. Гистерезис проверяется на velocity_prev, а не на velocity в момент перехода
+// 2. Окно 1 мс, порог 3 перехода через ноль
 module osc_detector_ce (
-    input  wire               clk_200m,      // системный клок
+    input  wire               clk_200m,
     input  wire               rst_n,
     input  wire signed [31:0] velocity,
     output reg                osc_detected
 );
-    parameter WINDOW_TICKS = 4000;
-    parameter CROSS_THRESH = 3;
-    parameter signed [31:0] VEL_HYST = 32'sh00000CCD;
+    parameter WINDOW_TICKS = 4000;   // 1 мс при CE 4 МГц
+    parameter CROSS_THRESH = 3;      // порог переходов
+    parameter signed [31:0] VEL_HYST = 32'sh00000CCD; // 0.05 м/с в Q16.16
 
     // Делитель для Clock Enable: 200 МГц / 4 МГц = 50
-    parameter CE_DIVIDER = 8'd49;  // счёт 0..49 = 50 тактов
-
+    parameter CE_DIVIDER = 8'd49;
     reg [7:0]  ce_counter;
-    wire       ce_4m;  // импульс раз в 50 тактов
+    wire       ce_4m;
     assign ce_4m = (ce_counter == CE_DIVIDER);
 
     always @(posedge clk_200m or negedge rst_n) begin
@@ -36,14 +39,16 @@ module osc_detector_ce (
             zero_cross_count <= 8'd0;
             window_timer     <= 16'd0;
             osc_detected     <= 1'b0;
-        end else if (ce_4m) begin  // ИСПРАВЛЕНО: работаем только по CE
-            velocity_prev <= velocity;
-
+        end else if (ce_4m) begin
+            // Детекция перехода через ноль с гистерезисом на ПРЕДЫДУЩЕМ значении
             if ((velocity_prev[31] != velocity[31]) &&
-                (velocity > VEL_HYST || velocity < -VEL_HYST) &&
+                (velocity_prev > VEL_HYST || velocity_prev < -VEL_HYST) &&
                 (window_timer < WINDOW_TICKS))
                 zero_cross_count <= zero_cross_count + 8'd1;
 
+            velocity_prev <= velocity;
+
+            // Скользящее окно
             if (window_timer >= WINDOW_TICKS) begin
                 osc_detected     <= (zero_cross_count >= CROSS_THRESH);
                 zero_cross_count <= 8'd0;
