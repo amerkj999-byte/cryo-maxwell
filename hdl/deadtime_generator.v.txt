@@ -1,19 +1,19 @@
-// deadtime_generator.v — ИСПРАВЛЕНО: асинхронное гашение
+// deadtime_generator.v — ИСПРАВЛЕНО: устранён сквозняк на последнем тике
 module deadtime_generator (
     input  wire         clk_200m,
     input  wire         rst_n,
     input  wire         pwm_in,
-    input  wire         shutdown_async,   // ДОБАВЛЕНО
+    input  wire         shutdown_async,
     output wire         pwm_high,
     output wire         pwm_low
 );
-    parameter DEADTIME_TICKS = 60;
+    parameter DEADTIME_TICKS = 60; // 300 нс / 5 нс = 60
 
-    reg [7:0] deadtime_counter;
-    reg       pwm_delayed;
-    reg       pwm_high_int, pwm_low_int;
+    reg [7:0]  deadtime_counter;
+    reg        pwm_delayed;
+    reg        pwm_high_int, pwm_low_int;
 
-    // Асинхронное гашение — мгновенно закрывает оба ключа
+    // Асинхронное гашение — высший приоритет
     assign pwm_high = shutdown_async ? 1'b0 : pwm_high_int;
     assign pwm_low  = shutdown_async ? 1'b0 : pwm_low_int;
 
@@ -26,19 +26,38 @@ module deadtime_generator (
         end else begin
             pwm_delayed <= pwm_in;
 
+            // =============================================
+            // Передний фронт pwm_in: включение верхнего ключа
+            // =============================================
             if (pwm_in && !pwm_delayed) begin
                 deadtime_counter <= DEADTIME_TICKS;
-                pwm_low_int      <= 1'b0;
+                pwm_low_int      <= 1'b0;   // нижний ключ — выключить немедленно
             end
 
-            if (!pwm_in && pwm_delayed) begin
+            // =============================================
+            // Задний фронт pwm_in: включение нижнего ключа
+            // =============================================
+            else if (!pwm_in && pwm_delayed) begin
                 deadtime_counter <= DEADTIME_TICKS;
-                pwm_high_int     <= 1'b0;
+                pwm_high_int     <= 1'b0;   // верхний ключ — выключить немедленно
             end
 
-            if (deadtime_counter > 0)
+            // =============================================
+            // Обработка счётчика мёртвого времени
+            // ИСПРАВЛЕНО: единая конструкция if-else
+            // =============================================
+            else if (deadtime_counter > 1) begin
+                // Счётчик > 1: просто уменьшаем, выходы не трогаем
                 deadtime_counter <= deadtime_counter - 8'd1;
+            end
+            else if (deadtime_counter == 1) begin
+                // Последний тик: уменьшаем до 0 И обновляем выходы в этом же такте
+                deadtime_counter <= 8'd0;
+                pwm_high_int     <= pwm_in;
+                pwm_low_int      <= ~pwm_in;
+            end
             else begin
+                // deadtime_counter == 0: сквозная передача
                 pwm_high_int <= pwm_in;
                 pwm_low_int  <= ~pwm_in;
             end
