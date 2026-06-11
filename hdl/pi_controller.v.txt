@@ -1,39 +1,69 @@
-// pi_controller.v — ИСПРАВЛЕНО (signed + антиусечение)
+// pi_controller.v — ПИ-регулятор с конвейером
+// Строго неблокирующие присваивания, 2-ступенчатый конвейер
 module pi_controller (
     input  wire               clk,
     input  wire               rst_n,
-    input  wire signed [13:0] current_in,      // ИСПРАВЛЕНО: signed
-    input  wire signed [13:0] target_current,  // ИСПРАВЛЕНО: signed
+    input  wire signed [13:0] current_in,
+    input  wire signed [13:0] target_current,
     output reg  [9:0]         pwm_duty
 );
-    parameter signed [7:0] Kp = 8'sh20;  // ИСПРАВЛЕНО: signed
-    parameter signed [7:0] Ki = 8'sh04;  // ИСПРАВЛЕНО: signed
+    parameter signed [7:0] Kp = 8'sh20;  // 32
+    parameter signed [7:0] Ki = 8'sh04;  // 4
 
-    reg signed [31:0] integral;
+    // Stage 0: входные регистры
+    reg signed [13:0] cur_in_r;
+    reg signed [13:0] tgt_cur_r;
+
+    // Stage 1: вычисление ошибки и П-составляющей, обновление интеграла
     reg signed [31:0] error;
+    reg signed [31:0] integral;
+    reg signed [31:0] p_term;      // Kp * error
+    reg signed [31:0] i_term;      // интеграл
+
+    // Stage 2: сумма и ограничение
     reg signed [31:0] pwm_tmp;
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            integral <= 32'sd0;
-            pwm_duty <= 10'd0;
-            pwm_tmp  <= 32'sd0;
-        end else begin
-            error = target_current - current_in;
+            // Stage 0
+            cur_in_r  <= 14'sd0;
+            tgt_cur_r <= 14'sd0;
 
-            // Антивиндовка
+            // Stage 1
+            error    <= 32'sd0;
+            integral <= 32'sd0;
+            p_term   <= 32'sd0;
+            i_term   <= 32'sd0;
+
+            // Stage 2
+            pwm_tmp  <= 32'sd0;
+            pwm_duty <= 10'd0;
+        end else begin
+            // =========== Stage 0: захват входов ===========
+            cur_in_r  <= current_in;
+            tgt_cur_r <= target_current;
+
+            // =========== Stage 1: ошибка и составляющие ===========
+            error <= tgt_cur_r - cur_in_r;
+
+            // Антивиндовка: обновляем интеграл только если не на границе
             if (pwm_duty < 10'd799 && pwm_duty > 10'd0)
                 integral <= integral + Ki * error;
+            // иначе integral замораживается
 
-            pwm_tmp <= Kp * error + integral;
+            p_term <= Kp * error;
+            i_term <= integral;
 
-            // Ограничение на 32-битном знаковом уровне
+            // =========== Stage 2: сумма и ограничение ===========
+            pwm_tmp <= p_term + i_term;
+
+            // Ограничение на знаковом уровне
             if (pwm_tmp > 32'sd799)
-                pwm_tmp <= 32'sd799;
+                pwm_duty <= 10'd799;
             else if (pwm_tmp < 32'sd0)
-                pwm_tmp <= 32'sd0;
-
-            pwm_duty <= pwm_tmp[9:0];
+                pwm_duty <= 10'd0;
+            else
+                pwm_duty <= pwm_tmp[9:0];
         end
     end
 endmodule
