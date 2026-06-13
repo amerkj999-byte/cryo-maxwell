@@ -137,12 +137,14 @@ The project is calculated from magnetostatics to chemical compatibility. Geometr
 
 ```text
 .
+.
 ├── cad/           # Drawings and PMI in KOMPAS-3D
 ├── docs/          # Documentation, specifications, and FEA convergence plots
 ├── hdl/           # FPGA controller source code (Verilog/RTL)
 ├── src/           # Main C++ modules, FEA solvers, and thermal balance
 ├── LICENSE        # Project license (GPL v3)
-└── README.md      # Project documentation
+├── README.md      # Project documentation
+└── README.end.md
 HOW IT WORKS
 A Stirling cryocooler (2 W @ 40 K) cools 16 single-domain YBCO tiles. A magnetic assembly of 12 NdFeB N55 segments (Halbach cylinder, Br = 1.45 T) levitates in the field of the tiles with a gap of 1.0 mm. Holding force — 2,016 N.
 
