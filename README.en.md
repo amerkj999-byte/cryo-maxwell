@@ -80,27 +80,30 @@ g++ -O3 cryo-maxwellnoassembly.cpp -o cryo_no_assembly
 
 Run the compiled application:
 
-bash
-./cryo_maxwell
-Convergence Plots and Simulation Results (FEA)
-The results of numerical modeling and calculation convergence plots are available in the docs folder:
+   ## Convergence Plots and Simulation Results (FEA)
 
-Study	Convergence Plot
-General FEA Convergence	https://docs/convergence_FEA.png
-Magnetic System (Halbach)	https://docs/convergence_halbah.png
-Heat Gain	https://docs/convergence_heat_gain.png
-Impact Loads	https://docs/convergence_impact.png
-Superconductor (YBCO)	https://docs/convergence_ybco.png
-Click on any plot to open it in its original resolution.
+The results of numerical modeling and calculation convergence plots are available in the `docs` folder:
 
-❄️ CRYO-MAXWELL V5.0
-Fork shock absorber based on quantum pinning with active energy recuperation
+| Study | Convergence Plot |
+| :--- | :--- |
+| **General FEA Convergence** | [![FEA Convergence](docs/convergence_FEA.png)](docs/convergence_FEA.png) |
+| **Magnetic System (Halbach)** | [![Halbach Convergence](docs/convergence_halbah.png)](docs/convergence_halbah.png) |
+| **Heat Gain** | [![Heat Gain Convergence](docs/convergence_heat_gain.png)](docs/convergence_heat_gain.png) |
+| **Impact Loads** | [![Impact Convergence](docs/convergence_impact.png)](docs/convergence_impact.png) |
+| **Superconductor (YBCO)** | [![YBCO Convergence](docs/convergence_ybco.png)](docs/convergence_ybco.png) |
 
-https://img.shields.io/badge/License-GPLv3-blue.svg
-https://img.shields.io/badge/Stroke-120%2520mm-orange.svg
-https://img.shields.io/badge/Pinning_Force-2016%2520N-red.svg
-https://img.shields.io/badge/Max_Drop-4.5%2520m-critical.svg
-https://img.shields.io/badge/Operating-40%2520K-blue.svg
+*Click on any plot to open it in its original resolution.*
+
+
+   # ❄️ CRYO-MAXWELL V5.0
+
+**Fork shock absorber based on quantum pinning with active energy recuperation**
+
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+[![Stroke: 120mm](https://img.shields.io/badge/Stroke-120%20mm-orange.svg)]()
+[![Force: 2016 N](https://img.shields.io/badge/Pinning_Force-2016%20N-red.svg)]()
+[![Drop: 4.5m](https://img.shields.io/badge/Max_Drop-4.5%20m-critical.svg)]()
+[![Temp: 40K](https://img.shields.io/badge/Operating-40%20K-blue.svg)]()
 
 ABOUT THE PROJECT
 Cryo-Maxwell is an inverted telescopic fork in which the shaft does not touch the walls. It levitates in the magnetic field of superconducting YBCO tiles at 40 K. There is no friction. Upon impact, eddy currents in copper coils brake the shaft and return up to 70% of the energy to a supercapacitor.
