@@ -120,23 +120,17 @@ Cool-down Time	~15 min
 Weight	~4.5 kg
 Power Consumption	~50 W
 Recuperation	up to 70%
-REPOSITORY CONTENTS
-.
-├── src/ # C++ generators and solvers
-│ ├── cryo_maxwell_v5_production.cpp
-│ ├── cryo_maxwell_step_brep_v2.cpp
-│ ├── fea_halbach_2.5d.cpp
-│ ├── fea_sapphire_hertz_final.cpp
-│ ├── thermal_balance.cpp
-│ ├── chem_solver.cpp
-│ └── verilog/ # FPGA controller (~15 modules)
-├── stl/ # Detailed STLs (13 files)
-├── step/ # B-Rep model for KOMPAS-3D
-├── docs/ # MTC, BOM, PMI, test program
-├── calculations/ # FEA, thermal and chemical solver logs
-└── README.md
+## REPOSITORY STRUCTURE
 
-text
+```text
+.
+├── cad/           # CAD drawings and PMI models (KOMPAS-3D)
+├── docs/          # Specifications, test programs, and FEA convergence charts
+├── hdl/           # FPGA controller hardware description source files (Verilog)
+├── src/           # Core C++ modules, numeric solvers, and FEA simulation engines
+├── LICENSE        # Project license (GNU GPL v3.0)
+└── README.md      # Project documentation
+```
 
 HOW IT WORKS
 A Stirling cryocooler (2 W @ 40 K) cools 16 single-domain YBCO tiles. A magnetic assembly of 12 NdFeB N55 segments (Halbach cylinder, Br = 1.45 T) levitates in the field of the tiles with a 1.0 mm gap. The holding force is 2,016 N.
