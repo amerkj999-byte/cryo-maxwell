@@ -105,6 +105,8 @@ The results of numerical modeling and calculation convergence plots are availabl
 [![Drop: 4.5m](https://img.shields.io/badge/Max_Drop-4.5%20m-critical.svg)]()
 [![Temp: 40K](https://img.shields.io/badge/Operating-40%20K-blue.svg)]()
 
+---
+
 ## ABOUT THE PROJECT
 
 Cryo-Maxwell is an inverted telescopic fork in which the shaft does not touch the walls. It levitates in the magnetic field of superconducting YBCO tiles at 40 K. There is no friction. Upon impact, eddy currents in copper coils brake the shaft and return up to 70% of the energy to a supercapacitor.
