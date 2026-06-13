@@ -139,20 +139,17 @@ Cryo-Maxwell — это перевёрнутая телескопическая 
 ---
 
 ## СОСТАВ РЕПОЗИТОРИЯ
+
+```text
 .
-├── src/ # C++ генераторы и солверы
-│ ├── cryo_maxwell_v5_production.cpp
-│ ├── cryo_maxwell_step_brep_v2.cpp
-│ ├── fea_halbach_2.5d.cpp
-│ ├── fea_sapphire_hertz_final.cpp
-│ ├── thermal_balance.cpp
-│ ├── chem_solver.cpp
-│ └── verilog/ # ПЛИС-контроллер (~15 модулей)
-├── stl/ # Подетальные STL (13 файлов)
-├── step/ # B-Rep модель для КОМПАС-3D
-├── docs/ # МТК, BOM, PMI, программа испытаний
-├── calculations/ # Логи FEA, теплового и хим. солверов
-└── README.md
+├── cad/           # Чертежи и PMI в системе КОМПАС-3D
+├── docs/          # Документация, спецификации и графики сходимости FEA
+├── hdl/           # Исходный код ПЛИС-контроллера (Verilog/RTL)
+├── src/           # Основные C++ модули, FEA-солверы и тепловой баланс
+├── LICENSE        # Лицензия проекта (GPL v3)
+└── README.md      # Документация проекта
+```
+
 
 text
 
