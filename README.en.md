@@ -92,11 +92,11 @@ Numerical simulation results and convergence graphs for calculations are availab
 
 **A Quantum Pinning Fork Damper with Active Energy Recuperation**
 
-![License](https://shields.io)
-![Stroke](https://shields.io)
-![Pinning Force](https://shields.io)
-![Max Drop](https://shields.io)
-![Operating Temp](https://shields.io)
+![](https://shields.io)
+![](https://shields.io)
+![](https://shields.io)
+![](https://shields.io)
+![](https://shields.io)
 
 ## ABOUT THE PROJECT
 
